@@ -3,7 +3,7 @@ import numpy as np
 from sklearn.ensemble import RandomForestClassifier
 import pickle
 import pandas as pd
-# Load the dataset
+# Load the dataset from csv file
 df = pd.read_csv('greenhouse_air_quality_dataset.csv')
 df_3 = df.iloc[:,:3]
 X = df_3.to_numpy()
