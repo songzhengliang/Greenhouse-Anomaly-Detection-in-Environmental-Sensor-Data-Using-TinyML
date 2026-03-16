@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Greenhouse Action Dashboard</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div class="page-noise"></div>
+  <main class="shell">
+    <section class="hero panel">
+      <p class="eyebrow">Virtual actuator demo for a university project</p>
+      <h1>Greenhouse Action Intelligence Dashboard</h1>
+      <p class="hero-copy">
+        Sensor readings are translated into safe, explainable control recommendations.
+        The heater, cooling fan, ventilation, and misting system below are virtual statuses,
+        not real machine commands.
+      </p>
+    </section>
+
+    <section class="top-grid">
+      <article class="panel">
+        <div class="panel-head">
+          <h2>Scenario Input</h2>
+          <p>Use manual values or stream demo rows from the project dataset.</p>
+        </div>
+
+        <form id="control-form" class="control-form">
+          <label>
+            Temperature (C)
+            <input id="temperature_c" name="temperature_c" type="number" step="0.1" value="24.0">
+          </label>
+
+          <label>
+            Humidity (%)
+            <input id="humidity_pct" name="humidity_pct" type="number" step="0.1" value="60.0">
+          </label>
+
+          <label>
+            CO2 (ppm)
+            <input id="co2_ppm" name="co2_ppm" type="number" step="1" value="900">
+          </label>
+
+          <div class="threshold-block">
+            <h3>Decision Thresholds</h3>
+            <div class="threshold-grid">
+              <label>
+                Temp low
+                <input id="temperature_low" type="number" step="0.1" value="18.0">
+              </label>
+              <label>
+                Temp high
+                <input id="temperature_high" type="number" step="0.1" value="30.0">
+              </label>
+              <label>
+                Humidity low
+                <input id="humidity_low" type="number" step="0.1" value="45.0">
+              </label>
+              <label>
+                Humidity high
+                <input id="humidity_high" type="number" step="0.1" value="75.0">
+              </label>
+              <label>
+                CO2 high
+                <input id="co2_high" type="number" step="1" value="1200">
+              </label>
+            </div>
+          </div>
+
+          <div class="button-row">
+            <button id="evaluate-button" type="submit">Evaluate Scenario</button>
+            <button id="demo-button" type="button" class="secondary">Load Demo Row</button>
+            <button id="live-button" type="button" class="secondary">Watch ESP32-S3 Feed</button>
+            <button id="autoplay-button" type="button" class="ghost">Start Demo Stream</button>
+          </div>
+        </form>
+      </article>
+
+      <article class="panel decision-panel">
+        <div class="decision-topline">
+          <span id="state-pill" class="state-pill stable">Stable</span>
+          <span id="mode-pill" class="mode-pill">Manual</span>
+        </div>
+
+        <h2>Decision Summary</h2>
+        <p id="summary-text" class="summary-text">
+          Conditions are within the configured greenhouse band.
+        </p>
+        <p id="scenario-note" class="scenario-note">Ready for evaluation.</p>
+
+        <div class="metric-grid">
+          <div class="metric-card">
+            <span class="metric-label">Temperature</span>
+            <strong id="metric-temperature">24.0 C</strong>
+          </div>
+          <div class="metric-card">
+            <span class="metric-label">Humidity</span>
+            <strong id="metric-humidity">60.0%</strong>
+          </div>
+          <div class="metric-card">
+            <span class="metric-label">CO2</span>
+            <strong id="metric-co2">900 ppm</strong>
+          </div>
+        </div>
+      </article>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <h2>Virtual Machine Status</h2>
+        <p>These are recommended machine states for presentation and testing purposes.</p>
+      </div>
+      <div id="action-grid" class="action-grid"></div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <h2>Presentation Controls</h2>
+        <p>Keep the ESP32-S3 live feed running, then nudge or override the displayed values during your demo.</p>
+      </div>
+
+      <div class="presentation-grid">
+        <article class="presentation-card">
+          <h3>Raw ESP32-S3 Feed</h3>
+          <p id="live-source-note" class="scenario-note">
+            Waiting for the first board sample.
+          </p>
+          <div class="metric-grid compact-grid">
+            <div class="metric-card">
+              <span class="metric-label">Raw temperature</span>
+              <strong id="raw-temperature">24.0 C</strong>
+            </div>
+            <div class="metric-card">
+              <span class="metric-label">Raw humidity</span>
+              <strong id="raw-humidity">60.0%</strong>
+            </div>
+            <div class="metric-card">
+              <span class="metric-label">Raw CO2</span>
+              <strong id="raw-co2">900 ppm</strong>
+            </div>
+          </div>
+        </article>
+
+        <article class="presentation-card">
+          <h3>Live Nudges</h3>
+          <p class="scenario-note">
+            Use these buttons to add or reduce values while the live feed is running.
+          </p>
+
+          <div class="adjust-row">
+            <div>
+              <strong>Temperature</strong>
+              <p id="offset-temperature" class="offset-label">Offset: +0.0 C</p>
+            </div>
+            <div class="adjust-buttons">
+              <button type="button" class="mini-button" data-adjust-field="temperature_c" data-adjust-delta="-1">-1 C</button>
+              <button type="button" class="mini-button" data-adjust-field="temperature_c" data-adjust-delta="1">+1 C</button>
+            </div>
+          </div>
+
+          <div class="adjust-row">
+            <div>
+              <strong>Humidity</strong>
+              <p id="offset-humidity" class="offset-label">Offset: +0.0 %</p>
+            </div>
+            <div class="adjust-buttons">
+              <button type="button" class="mini-button" data-adjust-field="humidity_pct" data-adjust-delta="-5">-5 %</button>
+              <button type="button" class="mini-button" data-adjust-field="humidity_pct" data-adjust-delta="5">+5 %</button>
+            </div>
+          </div>
+
+          <div class="adjust-row">
+            <div>
+              <strong>CO2</strong>
+              <p id="offset-co2" class="offset-label">Offset: +0 ppm</p>
+            </div>
+            <div class="adjust-buttons">
+              <button type="button" class="mini-button" data-adjust-field="co2_ppm" data-adjust-delta="-100">-100 ppm</button>
+              <button type="button" class="mini-button" data-adjust-field="co2_ppm" data-adjust-delta="100">+100 ppm</button>
+            </div>
+          </div>
+
+          <div class="button-row compact-buttons">
+            <button id="reset-offsets-button" type="button" class="ghost">Reset Offsets</button>
+          </div>
+        </article>
+
+        <article class="presentation-card">
+          <h3>Exact Override</h3>
+          <p id="presentation-note" class="scenario-note">
+            Override replaces the live feed values until you clear it.
+          </p>
+
+          <div class="override-grid">
+            <label>
+              Temperature (C)
+              <input id="override_temperature_c" type="number" step="0.1" value="24.0">
+            </label>
+            <label>
+              Humidity (%)
+              <input id="override_humidity_pct" type="number" step="0.1" value="60.0">
+            </label>
+            <label>
+              CO2 (ppm)
+              <input id="override_co2_ppm" type="number" step="1" value="900">
+            </label>
+          </div>
+
+          <div class="button-row compact-buttons">
+            <button id="apply-override-button" type="button">Apply Override</button>
+            <button id="clear-override-button" type="button" class="secondary">Clear Override</button>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <section class="bottom-grid">
+      <article class="panel">
+        <div class="panel-head">
+          <h2>Decision Trace</h2>
+          <p>Triggered conditions explain why the dashboard wants each action.</p>
+        </div>
+        <div id="alert-list" class="alert-list"></div>
+      </article>
+
+      <article class="panel">
+        <div class="panel-head">
+          <h2>Condition to Action Map</h2>
+          <p>This matches the project logic you described.</p>
+        </div>
+        <table class="rule-table">
+          <thead>
+            <tr>
+              <th>Environment</th>
+              <th>Virtual action</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Temperature high</td>
+              <td>Cooling / ventilation</td>
+            </tr>
+            <tr>
+              <td>Temperature low</td>
+              <td>Heating</td>
+            </tr>
+            <tr>
+              <td>Humidity high</td>
+              <td>Ventilation</td>
+            </tr>
+            <tr>
+              <td>Humidity low</td>
+              <td>Misting</td>
+            </tr>
+            <tr>
+              <td>CO2 high</td>
+              <td>Ventilation</td>
+            </tr>
+          </tbody>
+        </table>
+      </article>
+    </section>
+  </main>
+
+  <script src="/app.js"></script>
+</body>
+</html>
