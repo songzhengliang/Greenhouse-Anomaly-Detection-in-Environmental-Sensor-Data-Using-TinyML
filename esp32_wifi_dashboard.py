@@ -13,6 +13,11 @@ import time
 from scd41_driver import SCD41
 
 try:
+    import board_config as config
+except ImportError:
+    config = None
+
+try:
     import ujson as json
 except ImportError:
     import json
@@ -28,20 +33,41 @@ except ImportError:
     import socket
 
 
-WIFI_SSID = "YOUR_WIFI_NAME"
-WIFI_PASSWORD = "YOUR_WIFI_PASSWORD"
-LAPTOP_IP = "192.168.1.100"
-SERVER_URL = "http://{}:8000/api/telemetry".format(LAPTOP_IP)
-DEVICE_ID = "esp32-s3-greenhouse-1"
+WIFI_SSID = getattr(config, "WIFI_SSID", "YOUR_WIFI_NAME")
+WIFI_PASSWORD = getattr(config, "WIFI_PASSWORD", "YOUR_WIFI_PASSWORD")
+SERVER_HOST = getattr(config, "SERVER_HOST", "YOUR_LAPTOP_IP")
+SERVER_PORT = int(getattr(config, "SERVER_PORT", 8000))
+SERVER_URL = "http://{}:{}/api/telemetry".format(SERVER_HOST, SERVER_PORT)
+BOARD_LOG_URL = "http://{}:{}/api/board/log".format(SERVER_HOST, SERVER_PORT)
+DEVICE_ID = getattr(config, "DEVICE_ID", "esp32-s3-greenhouse-1")
 
-I2C_BUS = 0
+I2C_BUS = int(getattr(config, "I2C_BUS", 0))
 # Default SCD41 wiring used elsewhere in this repo for ESP32-S3 boards.
 # Change these if your specific ESP32-S3 board uses different pins.
-I2C_SCL_PIN = 8
-I2C_SDA_PIN = 9
-I2C_FREQ = 100000
-SAMPLE_INTERVAL_S = 30
-WIFI_TIMEOUT_S = 20
+I2C_SCL_PIN = int(getattr(config, "I2C_SCL_PIN", 8))
+I2C_SDA_PIN = int(getattr(config, "I2C_SDA_PIN", 9))
+I2C_FREQ = int(getattr(config, "I2C_FREQ", 100000))
+SAMPLE_INTERVAL_S = int(getattr(config, "SAMPLE_INTERVAL_S", 30))
+WIFI_TIMEOUT_S = int(getattr(config, "WIFI_TIMEOUT_S", 20))
+HTTP_TIMEOUT_S = int(getattr(config, "HTTP_TIMEOUT_S", 10))
+
+
+def config_is_placeholder(value):
+    text = str(value).strip()
+    if not text:
+        return True
+    if text.startswith("YOUR_"):
+        return True
+    return False
+
+
+def validate_config():
+    if config_is_placeholder(WIFI_SSID):
+        raise RuntimeError("Set WIFI_SSID in board_config.py before running.")
+    if config_is_placeholder(WIFI_PASSWORD):
+        raise RuntimeError("Set WIFI_PASSWORD in board_config.py before running.")
+    if config_is_placeholder(SERVER_HOST):
+        raise RuntimeError("Set SERVER_HOST in board_config.py before running.")
 
 
 def connect_wifi(ssid, password, timeout_s=WIFI_TIMEOUT_S):
@@ -49,17 +75,17 @@ def connect_wifi(ssid, password, timeout_s=WIFI_TIMEOUT_S):
     wlan.active(True)
 
     if wlan.isconnected():
-        print("Wi-Fi already connected:", wlan.ifconfig())
+        log_message("Wi-Fi already connected: {}".format(wlan.ifconfig()))
         return wlan
 
-    print("Connecting to Wi-Fi:", ssid)
+    log_message("Connecting to Wi-Fi: {}".format(ssid), remote=False)
     wlan.connect(ssid, password)
 
     started_ms = time.ticks_ms()
     timeout_ms = int(timeout_s * 1000)
     while time.ticks_diff(time.ticks_ms(), started_ms) < timeout_ms:
         if wlan.isconnected():
-            print("Wi-Fi connected:", wlan.ifconfig())
+            log_message("Wi-Fi connected: {}".format(wlan.ifconfig()))
             return wlan
         time.sleep(0.5)
 
@@ -69,7 +95,7 @@ def connect_wifi(ssid, password, timeout_s=WIFI_TIMEOUT_S):
 def ensure_wifi(wlan):
     if wlan.isconnected():
         return wlan
-    print("Wi-Fi dropped. Reconnecting...")
+    log_message("Wi-Fi dropped. Reconnecting...", level="warning", remote=False)
     return connect_wifi(WIFI_SSID, WIFI_PASSWORD)
 
 
@@ -89,6 +115,19 @@ def parse_http_url(url):
         port = 80
 
     return host, port, path
+
+
+def socket_send_all(client, payload):
+    if hasattr(client, "sendall"):
+        client.sendall(payload)
+        return
+
+    total_sent = 0
+    while total_sent < len(payload):
+        sent = client.send(payload[total_sent:])
+        if not sent:
+            raise OSError("socket send failed")
+        total_sent += sent
 
 
 def post_json(url, payload):
@@ -112,18 +151,20 @@ def post_json(url, payload):
     host, port, path = parse_http_url(url)
     address = socket.getaddrinfo(host, port)[0][-1]
     client = socket.socket()
+    if hasattr(client, "settimeout"):
+        client.settimeout(HTTP_TIMEOUT_S)
     client.connect(address)
 
     request = (
         "POST {path} HTTP/1.1\r\n"
-        "Host: {host}\r\n"
+        "Host: {host}:{port}\r\n"
         "Content-Type: application/json\r\n"
         "Content-Length: {length}\r\n"
         "Connection: close\r\n\r\n"
         "{body}"
-    ).format(path=path, host=host, length=len(body), body=body)
+    ).format(path=path, host=host, port=port, length=len(body), body=body)
 
-    client.send(request.encode("utf-8"))
+    socket_send_all(client, request.encode("utf-8"))
 
     chunks = []
     while True:
@@ -149,6 +190,28 @@ def post_json(url, payload):
     return status_code, parsed
 
 
+def post_board_log(message, level="info"):
+    payload = {
+        "device_id": DEVICE_ID,
+        "level": level,
+        "message": str(message),
+    }
+    return post_json(BOARD_LOG_URL, payload)
+
+
+def log_message(message, level="info", remote=True):
+    text = str(message)
+    print(text)
+
+    if not remote:
+        return
+
+    try:
+        post_board_log(text, level=level)
+    except Exception:
+        pass
+
+
 def send_telemetry(wlan, co2, temperature, humidity):
     payload = {
         "device_id": DEVICE_ID,
@@ -165,21 +228,36 @@ def send_telemetry(wlan, co2, temperature, humidity):
         pass
 
     status_code, response = post_json(SERVER_URL, payload)
-    print("Telemetry status:", status_code)
 
     if isinstance(response, dict):
-        print("Dashboard mode:", response.get("mode", "unknown"))
-        print("Decision:", response.get("summary", "No summary returned"))
+        log_message(
+            "Telemetry status: {} | Dashboard mode: {} | Decision: {}".format(
+                status_code,
+                response.get("mode", "unknown"),
+                response.get("summary", "No summary returned"),
+            )
+        )
     else:
-        print("Dashboard response:", response)
+        log_message(
+            "Telemetry status: {} | Dashboard response: {}".format(
+                status_code, response
+            )
+        )
 
     gc.collect()
 
 
 def main():
+    validate_config()
     wlan = connect_wifi(WIFI_SSID, WIFI_PASSWORD)
+    log_message(
+        "Server target: http://{}:{} | Device ID: {}".format(
+            SERVER_HOST, SERVER_PORT, DEVICE_ID
+        )
+    )
+    log_message("ESP32-S3 connected. Sensor warm-up is starting.")
 
-    print("Initialising I2C...")
+    log_message("Initialising I2C...")
     i2c = I2C(
         I2C_BUS,
         scl=Pin(I2C_SCL_PIN),
@@ -195,7 +273,7 @@ def main():
         pass
 
     sensor.start()
-    print("Waiting for the SCD41 warm-up period (35 seconds)...")
+    log_message("Waiting for the SCD41 warm-up period (35 seconds)...")
     time.sleep(35)
 
     while True:
@@ -204,12 +282,12 @@ def main():
             reading = sensor.read()
 
             if not reading:
-                print("Sensor data not ready. Retrying soon...")
+                log_message("Sensor data not ready. Retrying soon...", level="warning")
                 time.sleep(5)
                 continue
 
             co2, temperature, humidity = reading
-            print(
+            log_message(
                 "CO2={} ppm | Temperature={:.1f} C | Humidity={:.1f}%".format(
                     int(co2), temperature, humidity
                 )
@@ -218,10 +296,10 @@ def main():
             time.sleep(SAMPLE_INTERVAL_S)
 
         except KeyboardInterrupt:
-            print("Stopping telemetry loop.")
+            log_message("Stopping telemetry loop.", remote=False)
             break
         except Exception as exc:
-            print("Loop error:", exc)
+            log_message("Loop error: {}".format(exc), level="error")
             time.sleep(5)
 
     try:

@@ -1,21 +1,32 @@
-# Greenhouse-Anomaly-Detection-in-Environmental-Sensor-Data-Using-TinyML
+# Greenhouse Action Dashboard for ESP32-S3 + SCD41
 
-This repository now supports a safer university-project demo direction:
-sensor readings are converted into virtual greenhouse control actions on a local web dashboard,
-instead of sending commands to real machines.
+This project turns live greenhouse sensor readings into virtual control decisions on a local web dashboard.
+It is designed for a university demo where the system recommends actions such as heating, ventilation,
+cooling, and misting, but does not directly control real machines.
 
-Board-side code is written for MicroPython on the ESP32-S3.
-Laptop-side dashboard code runs with regular Python 3 because it hosts the webpage and API.
+The current repo supports two ways to connect the ESP32-S3 to the laptop:
 
-## What the dashboard does
+1. USB serial mode
+2. Wi-Fi mode
 
-- Reads temperature, humidity, and CO2 values.
-- Decides whether the greenhouse should be heating, cooling, ventilating, or misting.
-- Shows those decisions as virtual machine states on a webpage.
-- Can run from manual inputs or replay rows from `greenhouse_air_quality_dataset.csv`.
-- Lets you nudge or override live ESP32-S3 readings during a presentation.
+USB serial mode is the easiest way to get the system working the first time.
 
-## Action mapping
+## Tested Hardware
+
+- ESP32-S3 board running MicroPython
+- Sensirion SCD41 CO2 / temperature / humidity sensor
+- USB connection from the ESP32-S3 to the laptop
+
+## What the Dashboard Does
+
+- Reads temperature, humidity, and CO2 from the SCD41
+- Decides whether the greenhouse should be heating, cooling, ventilating, or misting
+- Shows those decisions as virtual machine states on a webpage
+- Shows live board console messages
+- Stores recent sensor history and renders 5-minute charts
+- Lets you add presentation offsets or exact overrides during a demo
+
+## Action Mapping
 
 - Temperature high -> cooling / ventilation
 - Temperature low -> heating
@@ -23,62 +34,279 @@ Laptop-side dashboard code runs with regular Python 3 because it hosts the webpa
 - Humidity low -> misting
 - CO2 high -> ventilation
 
-## Run the dashboard
+## Recommended Setup
+
+Use USB serial first.
+
+Once USB mode is working, you can switch to Wi-Fi mode later if you want the board to be wireless.
+
+## Hardware Wiring
+
+This repo is currently configured for the same wiring used in the project:
+
+- `ESP32-S3 GPIO 8` -> `SCD41 SCL`
+- `ESP32-S3 GPIO 9` -> `SCD41 SDA`
+- `ESP32-S3 3V3` -> `SCD41 VCC`
+- `ESP32-S3 GND` -> `SCD41 GND`
+
+If your wiring is different, change these values in `board_config.py`:
+
+- `I2C_SCL_PIN`
+- `I2C_SDA_PIN`
+- `I2C_BUS`
+- `I2C_FREQ`
+
+## Laptop Requirements
+
+Install Python 3.
+
+If `pyserial` is missing on your laptop, install it:
+
+```bash
+python3 -m pip install pyserial
+```
+
+## Important Files
+
+- `dashboard_server.py`: laptop HTTP server and USB serial bridge
+- `dashboard/`: webpage files
+- `board_config.example.py`: template config for the board
+- `board_config.py`: real board config used by the ESP32-S3
+- `esp32_usb_dashboard.py`: MicroPython board program for USB serial mode
+- `esp32_wifi_dashboard.py`: MicroPython board program for Wi-Fi mode
+- `scd41_driver.py`: MicroPython SCD41 driver
+- `main.py`: board startup file that currently launches USB mode
+
+## Step 1: Prepare the Board Config
+
+Create `board_config.py` from `board_config.example.py`.
+
+The file contains both USB-mode settings and Wi-Fi-mode settings.
+
+For USB mode, the important fields are:
+
+- `DEVICE_ID`
+- `I2C_BUS`
+- `I2C_SCL_PIN`
+- `I2C_SDA_PIN`
+- `I2C_FREQ`
+- `SAMPLE_INTERVAL_S`
+
+For Wi-Fi mode, these fields also matter:
+
+- `WIFI_SSID`
+- `WIFI_PASSWORD`
+- `SERVER_HOST`
+- `SERVER_PORT`
+
+## Step 2: Put the Files on the ESP32-S3
+
+Use a MicroPython IDE such as Thonny.
+
+Select:
+
+- Interpreter: `MicroPython (ESP32)`
+- Port: your ESP32-S3 serial port
+
+Upload these files to the board:
+
+- `board_config.py`
+- `scd41_driver.py`
+- `esp32_usb_dashboard.py`
+- `main.py`
+
+The current `main.py` is:
+
+```python
+import esp32_usb_dashboard
+
+esp32_usb_dashboard.main()
+```
+
+That means the board will start in USB serial mode whenever it boots.
+
+## Step 3: Close the IDE Serial Connection
+
+This step is important.
+
+The laptop dashboard server needs exclusive access to the board's USB serial port.
+If Thonny or another serial monitor is still connected, the dashboard server will not be able to read live data.
+
+After uploading the files:
+
+1. Stop any running script in the IDE
+2. Close the IDE shell or serial connection
+3. Leave the board plugged in over USB
+
+## Step 4: Start the Dashboard Server
+
+From the project folder, run:
+
+```bash
+python3 dashboard_server.py --serial-port /dev/cu.usbmodem2101
+```
+
+If your laptop uses a different serial device path, replace `/dev/cu.usbmodem2101` with the correct one.
+
+If auto-detection works on your system, this also works:
 
 ```bash
 python3 dashboard_server.py
 ```
 
-Then open `http://127.0.0.1:8000` on your laptop.
+Then open:
 
-## Wireless ESP32-S3 to laptop flow
+```text
+http://127.0.0.1:8000
+```
 
-The laptop dashboard can now receive live sensor data over Wi-Fi from the ESP32-S3.
+## Step 5: Boot the Board
 
-1. Start the server so it is reachable on your local network:
+Press the `EN` or `RST` button on the ESP32-S3 once.
+
+Do not hold the `BOOT` button.
+
+The board will:
+
+1. start `main.py`
+2. launch `esp32_usb_dashboard.py`
+3. initialize I2C
+4. start the SCD41
+5. wait for the 35-second SCD41 warm-up period
+6. begin sending live readings every 30 seconds
+
+## Step 6: Watch the Dashboard
+
+On the webpage:
+
+1. open the dashboard
+2. click `Watch ESP32-S3 Feed`
+
+You should see:
+
+- live temperature, humidity, and CO2 values
+- 5-minute line charts
+- board console messages in the `Board Console` section
+- virtual machine states changing based on the live readings
+
+## What Success Looks Like
+
+Once the system is working, the page will show:
+
+- a connected live feed
+- the board device id
+- recent board console messages
+- current live greenhouse values
+- virtual machine states such as `heating`, `ventilating`, `cooling`, or `misting`
+
+## USB Serial Workflow Summary
+
+This is the shortest working path:
+
+1. upload `board_config.py`, `scd41_driver.py`, `esp32_usb_dashboard.py`, and `main.py` to the board
+2. close the IDE serial connection
+3. run `python3 dashboard_server.py --serial-port /dev/cu.usbmodem2101`
+4. press `EN` or `RST`
+5. wait 35 seconds
+6. open `http://127.0.0.1:8000`
+7. click `Watch ESP32-S3 Feed`
+
+## Optional Wi-Fi Workflow
+
+If you want the board to communicate wirelessly instead of over USB:
+
+1. edit `board_config.py`
+2. set:
+   - `WIFI_SSID`
+   - `WIFI_PASSWORD`
+   - `SERVER_HOST`
+   - `SERVER_PORT`
+3. upload:
+   - `board_config.py`
+   - `scd41_driver.py`
+   - `esp32_wifi_dashboard.py`
+4. change `main.py` on the board to:
+
+```python
+import esp32_wifi_dashboard
+
+esp32_wifi_dashboard.main()
+```
+
+5. run the server on the laptop:
 
 ```bash
 python3 dashboard_server.py --host 0.0.0.0 --port 8000
 ```
 
-2. Find your laptop's local IP address on the same Wi-Fi network.
-On macOS a common command is:
+6. make sure the laptop and ESP32-S3 are on the same network
+7. open the dashboard and click `Watch ESP32-S3 Feed`
 
-```bash
-ipconfig getifaddr en0
-```
+## Presentation Controls
 
-3. Open `esp32_wifi_dashboard.py` and set:
-- `WIFI_SSID`
-- `WIFI_PASSWORD`
-- `LAPTOP_IP`
-- `I2C_SCL_PIN` / `I2C_SDA_PIN` if your ESP32-S3 wiring differs from the repo default
+While the live board feed is running, the webpage also supports:
 
-4. Copy `esp32_wifi_dashboard.py` and `scd41_driver.py` to the ESP32-S3 and run the client script.
+- plus and minus offset nudges for temperature, humidity, and CO2
+- exact override values
+- live charts for the last 5 minutes
+- virtual machine status cards at the bottom of the page
 
-These two files are the MicroPython side of the system.
+This is useful for presentations because you can demonstrate greenhouse decisions safely
+without actually turning on real machines.
 
-5. In the webpage, press `Watch ESP32-S3 Feed` to follow live telemetry.
+## Troubleshooting
 
-The ESP32-S3 posts readings to `POST /api/telemetry`, and the webpage reads the latest board state from `GET /api/live`.
+### The dashboard shows no live data
 
-## Presentation controls
+Check these in order:
 
-While the live ESP32-S3 feed is running, the webpage now supports:
+1. make sure the board is powered and connected over USB
+2. make sure the IDE is closed or disconnected from the board
+3. make sure `dashboard_server.py` is running
+4. make sure the correct serial port is being used
+5. press `EN` or `RST` once
+6. wait at least 35 seconds for the SCD41 warm-up
 
-- quick `+` / `-` nudges for temperature, humidity, and CO2
-- exact manual override values for all three live readings
-- resetting offsets without disconnecting the board
+### The board enters download mode
 
-This means you can present scenarios such as "too cold", "too humid", or "CO2 too high"
-on demand, while still keeping the project framed as a safe virtual decision-support system.
+If you see text like `waiting for download`, the board is in the ESP32 ROM bootloader.
 
-## Main files
+To recover:
 
-- `greenhouse_control.py`: reusable greenhouse decision logic
-- `dashboard_server.py`: local HTTP server and JSON API
+1. release the `BOOT` button if it is pressed
+2. press `EN` or `RST` once
+3. do not hold `BOOT`
+4. try again
+
+### The server cannot open the serial port
+
+That usually means another app is already using the board.
+
+Close:
+
+- Thonny shell
+- another serial monitor
+- another dashboard server instance
+
+Then start the server again.
+
+### The sensor values never change
+
+Check:
+
+1. `SCL` really goes to `GPIO 8`
+2. `SDA` really goes to `GPIO 9`
+3. power and ground are correct
+4. the SCD41 has had enough warm-up time
+
+## Main Files
+
+- `greenhouse_control.py`: greenhouse decision engine
+- `dashboard_server.py`: laptop server and USB serial bridge
 - `dashboard/`: webpage UI
-- `esp32_wifi_dashboard.py`: MicroPython ESP32-S3 Wi-Fi client that sends live telemetry
-- `scd41_driver.py`: reusable MicroPython SCD41 driver
-- `scd41_test.py`: MicroPython sensor reading prototype
-- `train_model.py`: desktop training/export prototype
+- `esp32_usb_dashboard.py`: MicroPython USB serial board program
+- `esp32_wifi_dashboard.py`: MicroPython Wi-Fi board program
+- `scd41_driver.py`: SCD41 driver for MicroPython
+- `board_config.py`: board-specific configuration
+- `main.py`: current startup file for USB mode
+- `train_model.py`: desktop training and export prototype
