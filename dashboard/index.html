@@ -301,13 +301,30 @@
       </div>
 
       <div class="col-12">
+        <section class="card border-0 shadow-sm dashboard-card machine-shell">
+          <div class="card-body p-4">
+            <div class="d-flex justify-content-between align-items-start gap-3 mb-4">
+              <div>
+                <h2 class="h4 mb-1">Virtual Machines</h2>
+                <p class="text-secondary mb-0">
+                  These machine states stay virtual for presentation safety and explainability.
+                </p>
+              </div>
+              <span class="badge rounded-pill bg-success-subtle text-success-emphasis">Virtual layer</span>
+            </div>
+            <div id="action-grid" class="row g-3"></div>
+          </div>
+        </section>
+      </div>
+
+      <div class="col-12">
         <section class="card border-0 shadow-sm dashboard-card console-card">
           <div class="card-body p-4">
             <div class="d-flex justify-content-between align-items-start gap-3 mb-3">
               <div>
                 <h2 class="h4 mb-1">Board Console</h2>
                 <p class="text-secondary mb-0">
-                  Real-time ESP32-S3 console messages mirrored from the MicroPython board over Wi-Fi.
+                  Real-time ESP32-S3 console messages mirrored from the MicroPython board over USB serial or Wi-Fi.
                 </p>
               </div>
               <span id="board-console-status" class="badge rounded-pill bg-secondary-subtle text-secondary-emphasis">Waiting</span>
@@ -320,23 +337,6 @@
                 No board console messages yet. Start the ESP32-S3 telemetry script to stream logs here.
               </div>
             </div>
-          </div>
-        </section>
-      </div>
-
-      <div class="col-12">
-        <section class="card border-0 shadow-sm dashboard-card machine-shell">
-          <div class="card-body p-4">
-            <div class="d-flex justify-content-between align-items-start gap-3 mb-4">
-              <div>
-                <h2 class="h4 mb-1">Virtual Machines</h2>
-                <p class="text-secondary mb-0">
-                  These machine states stay virtual for presentation safety and explainability.
-                </p>
-              </div>
-              <span class="badge rounded-pill bg-success-subtle text-success-emphasis">Bottom panel</span>
-            </div>
-            <div id="action-grid" class="row g-3"></div>
           </div>
         </section>
       </div>
