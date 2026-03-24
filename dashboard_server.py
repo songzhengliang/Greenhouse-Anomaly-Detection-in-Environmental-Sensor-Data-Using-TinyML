@@ -11,7 +11,8 @@ from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
 from urllib.parse import urlparse
 
-from greenhouse_control import Thresholds, evaluate_greenhouse
+from ai_greenhouse_control import evaluate_greenhouse_ai
+from greenhouse_control import Thresholds
 
 try:
     import serial
@@ -22,7 +23,7 @@ except ImportError:
 
 ROOT = Path(__file__).resolve().parent
 DASHBOARD_DIR = ROOT / "dashboard"
-DATASET_FILE = ROOT / "greenhouse_air_quality_dataset.csv"
+DATASET_FILE = ROOT / "greenhouse_action_control_dataset.csv"
 LIVE_TIMEOUT_SECONDS = 75
 BOARD_LOG_LIMIT = 200
 DEFAULT_SERIAL_BAUD = 115200
@@ -222,7 +223,13 @@ def detect_serial_port() -> str | None:
         description = (port.description or "").lower()
         if port.vid == 0x303A:
             return port.device
-        if "esp32" in description or "usb jtag/serial" in description:
+        if (
+            "esp32" in description
+            or "usb jtag/serial" in description
+            or "usb serial" in description
+            or "usb single serial" in description
+            or "usbmodem" in (port.device or "").lower()
+        ):
             fallback = fallback or port.device
     return fallback
 
@@ -374,7 +381,7 @@ class SerialBridge(threading.Thread):
 
 
 def default_live_payload() -> dict:
-    payload = evaluate_greenhouse(
+    payload = evaluate_greenhouse_ai(
         DEFAULT_LIVE_SENSORS["temperature_c"],
         DEFAULT_LIVE_SENSORS["humidity_pct"],
         DEFAULT_LIVE_SENSORS["co2_ppm"],
@@ -406,7 +413,7 @@ def current_live_payload() -> dict:
     raw_sensors = state["raw_sensors"] or copy.deepcopy(DEFAULT_LIVE_SENSORS)
     thresholds = Thresholds.from_mapping(state["thresholds"])
     effective_sensors = apply_presentation_controls(raw_sensors, presentation_state)
-    payload = evaluate_greenhouse(
+    payload = evaluate_greenhouse_ai(
         temperature_c=effective_sensors["temperature_c"],
         humidity_pct=effective_sensors["humidity_pct"],
         co2_ppm=effective_sensors["co2_ppm"],
@@ -555,7 +562,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
             payload = json.loads(raw.decode("utf-8"))
             if route == "/api/recommend":
                 thresholds = Thresholds.from_mapping(payload.get("thresholds"))
-                decision = evaluate_greenhouse(
+                decision = evaluate_greenhouse_ai(
                     temperature_c=float(payload["temperature_c"]),
                     humidity_pct=float(payload["humidity_pct"]),
                     co2_ppm=float(payload["co2_ppm"]),
@@ -591,7 +598,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
     def _next_demo_payload(cls) -> dict:
         row = cls.demo_rows[cls.demo_index % len(cls.demo_rows)]
         cls.demo_index += 1
-        decision = evaluate_greenhouse(
+        decision = evaluate_greenhouse_ai(
             temperature_c=row["temperature_c"],
             humidity_pct=row["humidity_pct"],
             co2_ppm=row["co2_ppm"],

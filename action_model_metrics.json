@@ -1,0 +1,22 @@
+{
+  "dataset": "greenhouse_action_control_dataset.csv",
+  "rows": 6050,
+  "feature_columns": [
+    "temperature_c",
+    "humidity_pct",
+    "co2_ppm"
+  ],
+  "target_columns": [
+    "heater_on",
+    "cooling_fan_on",
+    "ventilation_on",
+    "mister_on"
+  ],
+  "exact_match_accuracy": 0.9942,
+  "per_action_accuracy": {
+    "heater_on": 0.9992,
+    "cooling_fan_on": 0.9983,
+    "ventilation_on": 0.9967,
+    "mister_on": 0.9983
+  }
+}

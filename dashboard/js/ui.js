@@ -122,7 +122,7 @@ function renderAlerts(alerts) {
   if (!alerts.length) {
     dom.alertList.innerHTML = `
       <div class="list-group-item trace-item border-0 rounded-4">
-        No thresholds were breached. The greenhouse remains in a stable virtual state.
+        No action alerts are active. The greenhouse can remain in a stable virtual state.
       </div>
     `;
     return;
@@ -153,6 +153,11 @@ function renderMachines(actions) {
         </div>
         <h3 class="h5 mt-3 mb-2">${action.label}</h3>
         <p class="mb-0 text-secondary">${action.reason}</p>
+        ${action.confidence !== undefined ? `
+          <p class="mb-0 mt-2 small text-uppercase text-secondary fw-semibold">
+            ${escapeHtml(action.source || "AI")} confidence: ${(Number(action.confidence) * 100).toFixed(0)}%
+          </p>
+        ` : ""}
       </article>
     </div>
   `).join("");
