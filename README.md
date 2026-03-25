@@ -69,6 +69,7 @@ python3 -m pip install pyserial
 ## Important Files
 
 - `dashboard_server.py`: laptop HTTP server and USB serial bridge
+- `start_everything.py`: one-command launcher for the laptop side
 - `dashboard/`: webpage files
 - `board_config.example.py`: template config for the board
 - `board_config.py`: real board config used by the ESP32-S3
@@ -140,7 +141,22 @@ After uploading the files:
 
 ## Step 4: Start the Dashboard Server
 
-From the project folder, run:
+The fastest way is:
+
+```bash
+python3 start_everything.py
+```
+
+That launcher will:
+
+- open the dashboard in your browser
+- check whether the board files are already current
+- upload changed or missing board files before launch
+- start the laptop server
+- auto-detect the ESP32-S3 USB serial port
+- keep waiting if the board is not visible yet
+
+If you want the manual command instead, run:
 
 ```bash
 python3 dashboard_server.py --serial-port /dev/cu.usbmodem2101
@@ -205,7 +221,7 @@ This is the shortest working path:
 
 1. upload `board_config.py`, `scd41_driver.py`, `esp32_usb_dashboard.py`, and `main.py` to the board
 2. close the IDE serial connection
-3. run `python3 dashboard_server.py --serial-port /dev/cu.usbmodem2101`
+3. run `python3 start_everything.py`
 4. press `EN` or `RST`
 5. wait 35 seconds
 6. open `http://127.0.0.1:8000`
