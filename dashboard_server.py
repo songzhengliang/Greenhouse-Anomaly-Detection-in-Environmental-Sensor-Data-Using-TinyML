@@ -12,7 +12,15 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from ai_greenhouse_control import evaluate_greenhouse_ai
+from greenhouse_anomaly_detection import (
+    NOMINAL_SAMPLE_INTERVAL_S,
+    evaluate_greenhouse_anomaly_ai,
+)
 from greenhouse_control import Thresholds
+from presentation_presets import (
+    get_presentation_preset,
+    presentation_preset_catalog,
+)
 
 try:
     import serial
@@ -28,11 +36,13 @@ LIVE_TIMEOUT_SECONDS = 75
 BOARD_LOG_LIMIT = 200
 DEFAULT_SERIAL_BAUD = 115200
 SERIAL_EVENT_PREFIX = "GHUSB "
+ANOMALY_HISTORY_LIMIT = 18
 DEFAULT_LIVE_SENSORS = {
     "temperature_c": 24.0,
     "humidity_pct": 60.0,
     "co2_ppm": 900,
 }
+STATE_RANK = {"stable": 0, "warning": 1, "critical": 2}
 
 LIVE_STATE_LOCK = threading.Lock()
 LIVE_STATE = {
@@ -40,6 +50,7 @@ LIVE_STATE = {
     "thresholds": None,
     "device_id": None,
     "received_at": None,
+    "board_result": None,
 }
 PRESENTATION_STATE_LOCK = threading.Lock()
 PRESENTATION_STATE = {
@@ -53,6 +64,69 @@ PRESENTATION_STATE = {
 BOARD_LOG_LOCK = threading.Lock()
 BOARD_LOGS = []
 SERIAL_BRIDGE = None
+MODE_HISTORY_LOCK = threading.Lock()
+MODE_SENSOR_HISTORY = {
+    "live": [],
+    "manual": [],
+    "demo": [],
+    "preset": [],
+}
+
+
+def waiting_actions() -> list[dict]:
+    return [
+        {
+            "key": "heater",
+            "label": "Heater",
+            "status": "idle",
+            "active": False,
+            "reason": "Waiting for the first on-device AI decision from the ESP32-S3.",
+        },
+        {
+            "key": "cooling_fan",
+            "label": "Cooling Fan",
+            "status": "idle",
+            "active": False,
+            "reason": "Waiting for the first on-device AI decision from the ESP32-S3.",
+        },
+        {
+            "key": "ventilation",
+            "label": "Ventilation",
+            "status": "idle",
+            "active": False,
+            "reason": "Waiting for the first on-device AI decision from the ESP32-S3.",
+        },
+        {
+            "key": "mister",
+            "label": "Misting System",
+            "status": "idle",
+            "active": False,
+            "reason": "Waiting for the first on-device AI decision from the ESP32-S3.",
+        },
+    ]
+
+
+def waiting_anomaly() -> dict:
+    return {
+        "label": "normal",
+        "display_label": "No anomaly",
+        "severity": "stable",
+        "summary": "On-device AI anomaly watch is waiting for live board history.",
+        "detail": "The ESP32-S3 will report anomalies after its first real samples arrive.",
+        "confidence": 1.0,
+        "anomaly_score": 0.0,
+        "decision_engine": "waiting_for_board_ai",
+        "model_available": False,
+        "history_ready": False,
+        "window_size": 6,
+        "top_predictions": [
+            {
+                "label": "normal",
+                "display_label": "No anomaly",
+                "confidence": 1.0,
+            }
+        ],
+    }
 
 
 def load_demo_rows() -> list[dict]:
@@ -118,6 +192,10 @@ def presentation_is_active(presentation_state: dict) -> bool:
     return has_offsets or presentation_state["override"] is not None
 
 
+def promote_state(current: str, incoming: str) -> str:
+    return incoming if STATE_RANK.get(incoming, 0) > STATE_RANK.get(current, 0) else current
+
+
 def apply_presentation_controls(raw_sensors: dict, presentation_state: dict) -> dict:
     override = presentation_state["override"]
     if override is not None:
@@ -129,6 +207,149 @@ def apply_presentation_controls(raw_sensors: dict, presentation_state: dict) -> 
         raw_sensors["humidity_pct"] + offsets["humidity_pct"],
         raw_sensors["co2_ppm"] + offsets["co2_ppm"],
     )
+
+
+def presentation_offsets_for_history(raw_sensors: dict, presentation_state: dict) -> dict:
+    override = presentation_state["override"]
+    if override is not None:
+        return {
+            "temperature_c": round(override["temperature_c"] - raw_sensors["temperature_c"], 1),
+            "humidity_pct": round(override["humidity_pct"] - raw_sensors["humidity_pct"], 1),
+            "co2_ppm": int(round(override["co2_ppm"] - raw_sensors["co2_ppm"])),
+        }
+    return copy.deepcopy(presentation_state["offsets"])
+
+
+def apply_offsets_to_history_sample(sample: dict, offsets: dict) -> dict:
+    adjusted = normalize_sensors(
+        sample["temperature_c"] + offsets["temperature_c"],
+        sample["humidity_pct"] + offsets["humidity_pct"],
+        sample["co2_ppm"] + offsets["co2_ppm"],
+    )
+    adjusted["timestamp"] = sample.get("timestamp", time.time())
+    adjusted["gap_seconds"] = float(sample.get("gap_seconds", NOMINAL_SAMPLE_INTERVAL_S))
+    return adjusted
+
+
+def append_mode_history(mode: str, sensors: dict, timestamp: float | None = None) -> list[dict]:
+    recorded_at = timestamp if timestamp is not None else time.time()
+    entry = copy.deepcopy(sensors)
+    entry["timestamp"] = recorded_at
+
+    with MODE_HISTORY_LOCK:
+        history = MODE_SENSOR_HISTORY.setdefault(mode, [])
+        previous_timestamp = history[-1]["timestamp"] if history else recorded_at - NOMINAL_SAMPLE_INTERVAL_S
+        entry["gap_seconds"] = max(1.0, recorded_at - previous_timestamp)
+        history.append(entry)
+        del history[:-ANOMALY_HISTORY_LIMIT]
+        return copy.deepcopy(history)
+
+
+def current_mode_history(mode: str) -> list[dict]:
+    with MODE_HISTORY_LOCK:
+        return copy.deepcopy(MODE_SENSOR_HISTORY.get(mode, []))
+
+
+def base_history_for_mode(mode: str, sensors: dict, timestamp: float | None = None) -> list[dict]:
+    history = current_mode_history(mode)
+    if history:
+        return history
+    return [
+        {
+            **copy.deepcopy(sensors),
+            "timestamp": timestamp if timestamp is not None else time.time(),
+            "gap_seconds": NOMINAL_SAMPLE_INTERVAL_S,
+        }
+    ]
+
+
+def replace_mode_history(mode: str, history: list[dict]) -> list[dict]:
+    normalized_history = []
+    for sample in history[-ANOMALY_HISTORY_LIMIT:]:
+        normalized_entry = normalize_sensors(
+            temperature_c=sample["temperature_c"],
+            humidity_pct=sample["humidity_pct"],
+            co2_ppm=sample["co2_ppm"],
+        )
+        normalized_entry["timestamp"] = float(sample.get("timestamp", time.time()))
+        normalized_entry["gap_seconds"] = max(
+            1.0,
+            float(sample.get("gap_seconds", NOMINAL_SAMPLE_INTERVAL_S)),
+        )
+        normalized_history.append(normalized_entry)
+
+    with MODE_HISTORY_LOCK:
+        MODE_SENSOR_HISTORY[mode] = normalized_history
+        return copy.deepcopy(MODE_SENSOR_HISTORY[mode])
+
+
+def live_effective_history(raw_sensors: dict, presentation_state: dict) -> list[dict]:
+    raw_history = base_history_for_mode("live", raw_sensors)
+    offsets = presentation_offsets_for_history(raw_sensors, presentation_state)
+    return [
+        apply_offsets_to_history_sample(sample, offsets)
+        for sample in raw_history
+    ]
+
+
+def build_preset_history(samples: list[dict]) -> list[dict]:
+    if not samples:
+        return []
+
+    gaps = [
+        max(1.0, float(sample.get("gap_seconds", NOMINAL_SAMPLE_INTERVAL_S)))
+        for sample in samples
+    ]
+    backfill_seconds = sum(gaps[1:]) if len(gaps) > 1 else 0.0
+    current_timestamp = time.time() - backfill_seconds
+    history = []
+
+    for index, sample in enumerate(samples):
+        sensors = normalize_sensors(
+            temperature_c=sample["temperature_c"],
+            humidity_pct=sample["humidity_pct"],
+            co2_ppm=sample["co2_ppm"],
+        )
+        history.append(
+            {
+                **sensors,
+                "timestamp": current_timestamp,
+                "gap_seconds": gaps[index],
+            }
+        )
+        if index < len(samples) - 1:
+            current_timestamp += gaps[index + 1]
+
+    return history
+
+
+def attach_anomaly(payload: dict, anomaly: dict) -> dict:
+    payload["anomaly"] = anomaly
+    payload["overall_state"] = promote_state(payload["overall_state"], anomaly["severity"])
+    if anomaly["label"] != "normal":
+        payload["summary"] = payload["summary"] + " " + anomaly["summary"]
+    return payload
+
+
+def evaluate_history_payload(
+    mode: str,
+    sensors: dict,
+    history: list[dict],
+    thresholds: Thresholds | None = None,
+) -> dict:
+    decision = evaluate_greenhouse_ai(
+        temperature_c=sensors["temperature_c"],
+        humidity_pct=sensors["humidity_pct"],
+        co2_ppm=sensors["co2_ppm"],
+        thresholds=thresholds,
+    )
+    decision = attach_anomaly(
+        decision,
+        evaluate_greenhouse_anomaly_ai(history),
+    )
+    decision["mode"] = mode
+    decision["history_window"] = copy.deepcopy(history[-6:])
+    return decision
 
 
 def current_board_logs(limit: int = 80) -> list[dict]:
@@ -315,6 +536,8 @@ class SerialBridge(threading.Thread):
         self.baudrate = baudrate
         self.stop_event = threading.Event()
         self.status_lock = threading.Lock()
+        self.connection_lock = threading.Lock()
+        self.connection = None
         self.status = {
             "enabled": True,
             "connected": False,
@@ -338,6 +561,21 @@ class SerialBridge(threading.Thread):
     def stop(self) -> None:
         self.stop_event.set()
 
+    def write(self, payload: bytes) -> int:
+        if not payload:
+            return 0
+
+        with self.connection_lock:
+            connection = self.connection
+            if connection is None or not connection.is_open:
+                raise RuntimeError("serial bridge is not connected")
+            written = connection.write(payload)
+            try:
+                connection.flush()
+            except Exception:
+                pass
+            return int(written)
+
     def run(self) -> None:
         if serial is None:
             print("PySerial is not available. USB serial bridge disabled.")
@@ -359,6 +597,8 @@ class SerialBridge(threading.Thread):
             connection = None
             try:
                 connection = open_serial_connection(port, self.baudrate)
+                with self.connection_lock:
+                    self.connection = connection
                 self.set_status(connected=True, port=port, error=None)
                 print(f"USB serial bridge attached to {port}.")
 
@@ -373,6 +613,9 @@ class SerialBridge(threading.Thread):
                 print(f"USB serial bridge error on {port}: {exc}")
                 self.stop_event.wait(2.0)
             finally:
+                with self.connection_lock:
+                    if self.connection is connection:
+                        self.connection = None
                 if connection is not None:
                     try:
                         connection.close()
@@ -381,27 +624,32 @@ class SerialBridge(threading.Thread):
 
 
 def default_live_payload() -> dict:
-    payload = evaluate_greenhouse_ai(
-        DEFAULT_LIVE_SENSORS["temperature_c"],
-        DEFAULT_LIVE_SENSORS["humidity_pct"],
-        DEFAULT_LIVE_SENSORS["co2_ppm"],
-    )
-    payload.update(
-        {
-            "mode": "live",
-            "connected": False,
-            "device_id": None,
-            "received_at": None,
-            "age_seconds": None,
-            "raw_sensors": copy.deepcopy(DEFAULT_LIVE_SENSORS),
-            "presentation": copy.deepcopy(PRESENTATION_STATE),
-            "summary": (
-                "Waiting for live telemetry from the ESP32-S3. Start the board and connect "
-                "it over USB serial or Wi-Fi."
-            ),
-        }
-    )
-    return payload
+    return {
+        "sensors": copy.deepcopy(DEFAULT_LIVE_SENSORS),
+        "thresholds": copy.deepcopy(Thresholds().__dict__),
+        "overall_state": "stable",
+        "summary": (
+            "Waiting for live telemetry from the ESP32-S3. Start the board and connect "
+            "it over USB serial or Wi-Fi."
+        ),
+        "triggered_conditions": [],
+        "actions": waiting_actions(),
+        "decision_engine": "waiting_for_board_ai",
+        "model_available": False,
+        "mode": "live",
+        "connected": False,
+        "device_id": None,
+        "received_at": None,
+        "age_seconds": None,
+        "raw_sensors": copy.deepcopy(DEFAULT_LIVE_SENSORS),
+        "presentation": {
+            "offsets": {"temperature_c": 0.0, "humidity_pct": 0.0, "co2_ppm": 0},
+            "override": None,
+            "active": False,
+            "override_active": False,
+        },
+        "anomaly": waiting_anomaly(),
+    }
 
 
 def current_live_payload() -> dict:
@@ -410,43 +658,29 @@ def current_live_payload() -> dict:
     with PRESENTATION_STATE_LOCK:
         presentation_state = copy.deepcopy(PRESENTATION_STATE)
 
-    raw_sensors = state["raw_sensors"] or copy.deepcopy(DEFAULT_LIVE_SENSORS)
-    thresholds = Thresholds.from_mapping(state["thresholds"])
-    effective_sensors = apply_presentation_controls(raw_sensors, presentation_state)
-    payload = evaluate_greenhouse_ai(
-        temperature_c=effective_sensors["temperature_c"],
-        humidity_pct=effective_sensors["humidity_pct"],
-        co2_ppm=effective_sensors["co2_ppm"],
-        thresholds=thresholds,
-    )
-
     if state["received_at"] is None:
-        payload.update(
-            {
-                "mode": "live",
-                "connected": False,
-                "device_id": None,
-                "received_at": None,
-                "age_seconds": None,
-                "raw_sensors": raw_sensors,
-                "presentation": {
-                    **presentation_state,
-                    "active": presentation_is_active(presentation_state),
-                    "override_active": presentation_state["override"] is not None,
-                },
-            }
+        return default_live_payload()
+
+    raw_sensors = state["raw_sensors"] or copy.deepcopy(DEFAULT_LIVE_SENSORS)
+    board_result = copy.deepcopy(state.get("board_result"))
+    if board_result is not None:
+        payload = board_result
+        payload["sensors"] = copy.deepcopy(raw_sensors)
+    else:
+        payload = default_live_payload()
+        payload["sensors"] = copy.deepcopy(raw_sensors)
+        payload["raw_sensors"] = copy.deepcopy(raw_sensors)
+        payload["device_id"] = state["device_id"]
+        payload["connected"] = True
+        payload["received_at"] = time.strftime(
+            "%Y-%m-%d %H:%M:%S",
+            time.localtime(state["received_at"]),
         )
-        if presentation_is_active(presentation_state):
-            payload["summary"] = (
-                "Presentation controls are active while waiting for the first ESP32-S3 sample. "
-                + payload["summary"]
-            )
-        else:
-            payload["summary"] = (
-                "Waiting for live telemetry from the ESP32-S3. Start the board and connect "
-                "it over USB serial or Wi-Fi."
-            )
-        return payload
+        payload["age_seconds"] = round(max(0.0, time.time() - state["received_at"]), 1)
+        payload["summary"] = (
+            "Live sensor data arrived from the ESP32-S3, but no on-device AI result "
+            "was included in the payload yet."
+        )
 
     age_seconds = max(0.0, time.time() - state["received_at"])
     connected = age_seconds <= LIVE_TIMEOUT_SECONDS
@@ -461,27 +695,41 @@ def current_live_payload() -> dict:
             ),
             "age_seconds": round(age_seconds, 1),
             "raw_sensors": raw_sensors,
-            "presentation": {
-                **presentation_state,
-                "active": presentation_is_active(presentation_state),
-                "override_active": presentation_state["override"] is not None,
-            },
+            "presentation": (
+                {
+                    "offsets": {"temperature_c": 0.0, "humidity_pct": 0.0, "co2_ppm": 0},
+                    "override": None,
+                    "active": False,
+                    "override_active": False,
+                }
+                if board_result is not None
+                else {
+                    **presentation_state,
+                    "active": presentation_is_active(presentation_state),
+                    "override_active": presentation_state["override"] is not None,
+                }
+            ),
         }
     )
 
     summary_prefix = []
     if connected:
-        summary_prefix.append("Live ESP32-S3 update received.")
+        summary_prefix.append(
+            "Live ESP32-S3 on-device AI update received."
+            if board_result is not None
+            else "Live ESP32-S3 update received."
+        )
     else:
         summary_prefix.append("Live feed is stale. Showing the last ESP32-S3 reading.")
 
-    if presentation_state["override"] is not None:
+    if board_result is not None and presentation_is_active(presentation_state):
+        summary_prefix.append("Presentation controls are disabled while live on-device AI is active.")
+    elif presentation_state["override"] is not None:
         summary_prefix.append("Presentation override is active.")
     elif presentation_is_active(presentation_state):
         summary_prefix.append("Presentation offsets are active.")
 
     payload["summary"] = " ".join(summary_prefix + [payload["summary"]])
-
     return payload
 
 
@@ -498,7 +746,9 @@ def store_live_telemetry(payload: dict) -> dict:
         LIVE_STATE["thresholds"] = copy.deepcopy(thresholds.__dict__)
         LIVE_STATE["device_id"] = str(payload.get("device_id", "esp32-s3-greenhouse"))
         LIVE_STATE["received_at"] = time.time()
+        LIVE_STATE["board_result"] = copy.deepcopy(payload.get("board_result"))
 
+    append_mode_history("live", raw_sensors, timestamp=LIVE_STATE["received_at"])
     response = current_live_payload()
     response["posted_payload"] = raw_sensors
     return response
@@ -513,6 +763,73 @@ def update_presentation_controls(payload: dict) -> dict:
         PRESENTATION_STATE["offsets"] = presentation_state["offsets"]
         PRESENTATION_STATE["override"] = presentation_state["override"]
     return current_live_payload()
+
+
+def load_presentation_preset(payload: dict) -> dict:
+    preset_id = str(payload.get("preset_id", "")).strip()
+    preset = get_presentation_preset(preset_id)
+    if preset is None:
+        raise ValueError(f"unknown preset: {preset_id or 'missing'}")
+
+    thresholds = Thresholds.from_mapping(payload.get("thresholds"))
+    history = build_preset_history(preset["samples"])
+    history = replace_mode_history("preset", history)
+    sensors = copy.deepcopy(history[-1])
+    decision = evaluate_history_payload(
+        mode="preset",
+        sensors=sensors,
+        history=history,
+        thresholds=thresholds,
+    )
+    decision["preset_id"] = preset["id"]
+    decision["preset_label"] = preset["label"]
+    decision["preset_category"] = preset["category"]
+    decision["preset_description"] = preset["description"]
+    decision["preset_target_anomaly"] = preset["target_anomaly"]
+    return decision
+
+
+def send_serial_console_input(payload: dict) -> dict:
+    if SERIAL_BRIDGE is None:
+        raise ValueError("serial bridge is disabled")
+
+    control = str(payload.get("control", "")).strip().lower()
+    text = str(payload.get("text", ""))
+    append_newline = bool(payload.get("append_newline", True))
+
+    if control:
+        control_map = {
+            "interrupt": (b"\x03", "Dashboard sent Ctrl+C to the board console."),
+            "soft_reset": (b"\x04", "Dashboard sent Ctrl+D (soft reset) to the board console."),
+            "newline": (b"\r\n", "Dashboard sent a newline to the board console."),
+        }
+        if control not in control_map:
+            raise ValueError(f"unsupported control command: {control}")
+        raw_bytes, description = control_map[control]
+    else:
+        if not text.strip():
+            raise ValueError("command text must not be empty")
+        raw_bytes = text.encode("utf-8")
+        if append_newline:
+            raw_bytes += b"\r\n"
+        description = f"Dashboard sent console input: {text.strip()}"
+
+    try:
+        bytes_sent = SERIAL_BRIDGE.write(raw_bytes)
+    except RuntimeError as exc:
+        raise ValueError(str(exc)) from exc
+    store_board_log(
+        {
+            "device_id": "dashboard-host",
+            "level": "info",
+            "message": description,
+        }
+    )
+    return {
+        "ok": True,
+        "bytes_sent": bytes_sent,
+        "serial_bridge": serial_bridge_snapshot(),
+    }
 
 
 class DashboardHandler(BaseHTTPRequestHandler):
@@ -534,6 +851,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
         if route == "/api/demo":
             self._send_json(self._next_demo_payload())
+            return
+
+        if route == "/api/presets":
+            self._send_json({"presets": presentation_preset_catalog()})
             return
 
         if route == "/api/live":
@@ -562,14 +883,27 @@ class DashboardHandler(BaseHTTPRequestHandler):
             payload = json.loads(raw.decode("utf-8"))
             if route == "/api/recommend":
                 thresholds = Thresholds.from_mapping(payload.get("thresholds"))
-                decision = evaluate_greenhouse_ai(
+                sensors = normalize_sensors(
                     temperature_c=float(payload["temperature_c"]),
                     humidity_pct=float(payload["humidity_pct"]),
                     co2_ppm=float(payload["co2_ppm"]),
+                )
+                history = append_mode_history("manual", sensors)
+                decision = evaluate_history_payload(
+                    mode="manual",
+                    sensors=sensors,
+                    history=history,
                     thresholds=thresholds,
                 )
-                decision["mode"] = "manual"
                 self._send_json(decision)
+                return
+
+            if route == "/api/preset":
+                self._send_json(load_presentation_preset(payload))
+                return
+
+            if route == "/api/serial/write":
+                self._send_json(send_serial_console_input(payload))
                 return
 
             if route == "/api/telemetry":
@@ -598,12 +932,13 @@ class DashboardHandler(BaseHTTPRequestHandler):
     def _next_demo_payload(cls) -> dict:
         row = cls.demo_rows[cls.demo_index % len(cls.demo_rows)]
         cls.demo_index += 1
-        decision = evaluate_greenhouse_ai(
-            temperature_c=row["temperature_c"],
-            humidity_pct=row["humidity_pct"],
-            co2_ppm=row["co2_ppm"],
+        sensors = normalize_sensors(**row)
+        history = append_mode_history("demo", sensors)
+        decision = evaluate_history_payload(
+            mode="demo",
+            sensors=sensors,
+            history=history,
         )
-        decision["mode"] = "demo"
         decision["demo_row"] = cls.demo_index
         return decision
 

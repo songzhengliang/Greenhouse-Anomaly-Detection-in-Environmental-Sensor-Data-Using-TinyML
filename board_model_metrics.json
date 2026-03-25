@@ -1,0 +1,81 @@
+{
+  "action_models": {
+    "heater_on": {
+      "accuracy": 1.0
+    },
+    "cooling_fan_on": {
+      "accuracy": 0.9983
+    },
+    "ventilation_on": {
+      "accuracy": 0.9934
+    },
+    "mister_on": {
+      "accuracy": 1.0
+    }
+  },
+  "anomaly_model": {
+    "accuracy": 0.967,
+    "per_class": {
+      "normal": {
+        "precision": 0.9432,
+        "recall": 0.8646,
+        "f1_score": 0.9022
+      },
+      "temperature_high": {
+        "precision": 0.9897,
+        "recall": 1.0,
+        "f1_score": 0.9948
+      },
+      "temperature_low": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1_score": 1.0
+      },
+      "humidity_high": {
+        "precision": 0.9314,
+        "recall": 0.9896,
+        "f1_score": 0.9596
+      },
+      "humidity_low": {
+        "precision": 0.9592,
+        "recall": 0.9792,
+        "f1_score": 0.9691
+      },
+      "co2_high": {
+        "precision": 0.9794,
+        "recall": 0.9896,
+        "f1_score": 0.9845
+      },
+      "sensor_spike": {
+        "precision": 0.9796,
+        "recall": 1.0,
+        "f1_score": 0.9897
+      },
+      "sensor_drift": {
+        "precision": 0.8953,
+        "recall": 0.8021,
+        "f1_score": 0.8462
+      },
+      "sensor_stuck": {
+        "precision": 0.9314,
+        "recall": 0.9896,
+        "f1_score": 0.9596
+      },
+      "sensor_dropout": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1_score": 1.0
+      },
+      "cross_variable_inconsistency": {
+        "precision": 1.0,
+        "recall": 0.9896,
+        "f1_score": 0.9948
+      },
+      "out_of_range": {
+        "precision": 0.9897,
+        "recall": 1.0,
+        "f1_score": 0.9948
+      }
+    }
+  }
+}

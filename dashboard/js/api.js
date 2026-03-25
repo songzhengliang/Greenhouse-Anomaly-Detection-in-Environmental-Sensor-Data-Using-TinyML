@@ -21,6 +21,18 @@ export function loadDemoScenario() {
   return fetchJson("/api/demo");
 }
 
+export function loadAnomalyPresets() {
+  return fetchJson("/api/presets");
+}
+
+export function applyAnomalyPreset(presetId) {
+  return fetchJson("/api/preset", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ preset_id: presetId }),
+  });
+}
+
 export function loadLiveScenario() {
   return fetchJson("/api/live");
 }
@@ -34,5 +46,13 @@ export function pushPresentationState(presentation) {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(presentation),
+  });
+}
+
+export function sendBoardConsoleInput(payload) {
+  return fetchJson("/api/serial/write", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
   });
 }

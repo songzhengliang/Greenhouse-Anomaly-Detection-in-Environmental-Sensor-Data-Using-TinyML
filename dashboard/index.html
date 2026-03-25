@@ -11,9 +11,19 @@
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body class="app-body">
+  <nav class="navbar navbar-expand-lg sticky-top dashboard-nav">
+    <div class="container-fluid px-lg-4">
+      <span class="navbar-brand mb-0 h1 nav-brand">Greenhouse AI Dashboard</span>
+      <div class="d-flex flex-wrap gap-2 ms-lg-auto">
+        <button id="nav-live-button" type="button" class="btn btn-dark nav-switch-button">Live</button>
+        <button id="nav-preset-button" type="button" class="btn btn-outline-dark nav-switch-button">Run Presets</button>
+        <button id="nav-console-button" type="button" class="btn btn-outline-dark nav-switch-button">Board Console</button>
+      </div>
+    </div>
+  </nav>
   <main class="container-fluid py-4 px-lg-4">
     <div class="row g-4">
-      <div class="col-12">
+      <div class="col-12" data-hide-on-console="true">
         <section class="card border-0 shadow-sm hero-card">
           <div class="card-body p-4 p-xl-5">
             <div class="d-flex flex-column flex-xl-row justify-content-between align-items-xl-start gap-4">
@@ -21,13 +31,12 @@
                 <p class="eyebrow mb-2">ESP32-S3 greenhouse dashboard</p>
                 <h1 class="display-6 mb-3">Greenhouse Action Intelligence</h1>
                 <p class="lead text-secondary mb-0">
-                  Bootstrap 5 dashboard with live ESP32-S3 telemetry, 5-minute sensor trends,
-                  presentation-friendly offsets, and safe virtual machine decisions.
+                  Switch between the real on-device AI feed and a guided preset lab for presentation scenarios.
                 </p>
               </div>
               <div class="d-flex flex-wrap gap-2">
                 <span id="state-pill" class="badge rounded-pill state-pill bg-success-subtle text-success-emphasis">Stable</span>
-                <span id="mode-pill" class="badge rounded-pill mode-pill bg-info-subtle text-info-emphasis">Manual</span>
+                <span id="mode-pill" class="badge rounded-pill mode-pill bg-info-subtle text-info-emphasis">Live</span>
               </div>
             </div>
 
@@ -39,22 +48,44 @@
         </section>
       </div>
 
-      <div class="col-12">
+      <div class="col-12" data-page-panel="live">
+        <section class="card border-0 shadow-sm dashboard-card">
+          <div class="card-body p-4">
+            <div class="row g-4 align-items-center">
+              <div class="col-12 col-xl-8">
+                <div>
+                  <p class="eyebrow mb-2">Live Page</p>
+                  <h2 class="h3 mb-2">Real ESP32-S3 Feed</h2>
+                  <p class="text-secondary mb-0">
+                    This page focuses on the board-connected greenhouse stream. The ESP32-S3 performs the live AI action and anomaly decisions, and the PC only hosts the dashboard.
+                  </p>
+                </div>
+              </div>
+              <div class="col-12 col-xl-4">
+                <div class="live-mode-card">
+                  <p class="small text-uppercase text-secondary fw-semibold mb-2">Live control</p>
+                  <p id="live-source-note" class="mb-3 text-secondary">
+                    Waiting for the first ESP32-S3 board sample.
+                  </p>
+                  <button id="live-button" type="button" class="btn btn-success w-100">Watch ESP32-S3 Feed</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+      </div>
+
+      <div class="col-12" data-page-panel="preset">
         <section class="card border-0 shadow-sm dashboard-card">
           <div class="card-body p-4">
             <div class="row g-4 align-items-start">
               <div class="col-12 col-xl-7">
-                <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-center gap-3 mb-4">
+                <div class="d-flex justify-content-between align-items-lg-center gap-3 mb-4">
                   <div>
-                    <h2 class="h4 mb-1">Control Center</h2>
+                    <h2 class="h4 mb-1">Run Presets</h2>
                     <p class="text-secondary mb-0">
-                      Switch between manual, demo, and live ESP32-S3 modes, then tune the thresholds.
+                      Enter manual values or build a controlled presentation scenario for the AI to evaluate.
                     </p>
-                  </div>
-                  <div class="d-flex flex-wrap gap-2">
-                    <button id="demo-button" type="button" class="btn btn-outline-primary">Load Demo Row</button>
-                    <button id="live-button" type="button" class="btn btn-outline-success">Watch ESP32-S3 Feed</button>
-                    <button id="autoplay-button" type="button" class="btn btn-outline-warning">Start Demo Stream</button>
                   </div>
                 </div>
 
@@ -111,13 +142,13 @@
 
               <div class="col-12 col-xl-5">
                 <div class="override-card h-100 p-3 p-lg-4 rounded-4">
-                  <div class="d-flex justify-content-between align-items-start gap-3 mb-3">
-                    <div>
-                      <h3 class="h5 mb-1">Exact Override</h3>
-                      <p class="text-secondary mb-0">Force a presentation scenario without disconnecting the live board.</p>
-                    </div>
-                    <button id="reset-offsets-button" type="button" class="btn btn-outline-secondary btn-sm">Reset Offsets</button>
-                  </div>
+                      <div class="d-flex justify-content-between align-items-start gap-3 mb-3">
+                        <div>
+                          <h3 class="h5 mb-1">Preset Workspace</h3>
+                          <p class="text-secondary mb-0">Use exact values or load a prepared anomaly scenario for presentation.</p>
+                        </div>
+                        <button id="reset-offsets-button" type="button" class="btn btn-outline-secondary btn-sm">Reset Offsets</button>
+                      </div>
 
                   <p id="override-note" class="text-secondary small mb-3">
                     Override lets you force a specific presentation scenario.
@@ -145,7 +176,7 @@
 
                   <div class="live-source-card mt-4 p-3 rounded-4">
                     <p class="small text-uppercase text-secondary fw-semibold mb-2">Live source</p>
-                    <p id="live-source-note" class="mb-0 text-secondary">
+                    <p id="preset-source-note" class="mb-0 text-secondary">
                       Waiting for the first ESP32-S3 board sample.
                     </p>
                   </div>
@@ -156,7 +187,61 @@
         </section>
       </div>
 
-      <div class="col-12">
+      <div class="col-12" data-page-panel="preset">
+        <section class="card border-0 shadow-sm dashboard-card">
+          <div class="card-body p-4">
+            <details class="preset-collapse">
+              <summary class="preset-summary">
+                <div>
+                  <h2 class="h4 mb-1">Presentation Presets</h2>
+                  <p class="text-secondary mb-0">
+                    Open this compact menu when you want to trigger a prepared anomaly scenario for the demo.
+                  </p>
+                </div>
+                <span class="badge rounded-pill bg-secondary-subtle text-secondary-emphasis">Preset mode</span>
+              </summary>
+
+              <div class="preset-panel mt-4">
+                <div class="row g-3 align-items-end">
+                  <div class="col-12 col-xl-8">
+                    <label for="preset-select" class="form-label">Preset scenario</label>
+                    <select id="preset-select" class="form-select">
+                      <option>Loading anomaly presets...</option>
+                    </select>
+                  </div>
+                  <div class="col-12 col-xl-4 d-grid d-xl-flex justify-content-xl-end">
+                    <button id="apply-preset-button" type="button" class="btn btn-outline-dark px-4">
+                      Load Preset
+                    </button>
+                  </div>
+                </div>
+
+                <div class="preset-preview-card mt-3">
+                  <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-start gap-3 mb-3">
+                    <div>
+                      <p id="preset-category" class="preset-category mb-1">Preset</p>
+                      <h3 id="preset-label" class="h5 mb-1">Loading presets...</h3>
+                      <p id="preset-description" class="text-secondary mb-0">
+                        The selected preset will show its target anomaly and final snapshot here.
+                      </p>
+                    </div>
+                    <span id="preset-target-badge" class="badge rounded-pill bg-light text-dark">
+                      Waiting
+                    </span>
+                  </div>
+                  <div id="preset-preview" class="preset-preview">
+                    <span>-- C</span>
+                    <span>--%</span>
+                    <span>-- ppm</span>
+                  </div>
+                </div>
+              </div>
+            </details>
+          </div>
+        </section>
+      </div>
+
+      <div class="col-12" data-hide-on-console="true">
         <div class="row g-4">
           <div class="col-12 col-lg-4">
             <section class="card border-0 shadow-sm sensor-card temperature-card">
@@ -235,7 +320,7 @@
         </div>
       </div>
 
-      <div class="col-12">
+      <div class="col-12" data-hide-on-console="true">
         <div class="row g-4">
           <div class="col-12 col-xl-7">
             <section class="card border-0 shadow-sm dashboard-card h-100">
@@ -257,42 +342,39 @@
               <div class="card-body p-4">
                 <div class="d-flex justify-content-between align-items-start gap-3 mb-3">
                   <div>
-                    <h2 class="h4 mb-1">Condition Map</h2>
-                    <p class="text-secondary mb-0">How environmental conditions map to virtual machine actions.</p>
+                    <h2 class="h4 mb-1">Anomaly Watch</h2>
+                    <p class="text-secondary mb-0">Current AI anomaly classification from the rolling sensor history.</p>
                   </div>
-                  <span class="badge rounded-pill bg-primary-subtle text-primary-emphasis">Rule base</span>
+                  <span class="badge rounded-pill bg-danger-subtle text-danger-emphasis">AI anomaly model</span>
                 </div>
-                <div class="table-responsive">
-                  <table class="table align-middle condition-table mb-0">
-                    <thead>
-                      <tr>
-                        <th>Environment</th>
-                        <th>Virtual action</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      <tr>
-                        <td>Temperature high</td>
-                        <td>Cooling / ventilation</td>
-                      </tr>
-                      <tr>
-                        <td>Temperature low</td>
-                        <td>Heating</td>
-                      </tr>
-                      <tr>
-                        <td>Humidity high</td>
-                        <td>Ventilation</td>
-                      </tr>
-                      <tr>
-                        <td>Humidity low</td>
-                        <td>Misting</td>
-                      </tr>
-                      <tr>
-                        <td>CO2 high</td>
-                        <td>Ventilation</td>
-                      </tr>
-                    </tbody>
-                  </table>
+                <div class="anomaly-card p-3 rounded-4">
+                  <div class="d-flex justify-content-between align-items-start gap-3 mb-3">
+                    <div>
+                      <p class="sensor-label mb-1">Current anomaly</p>
+                      <h3 id="anomaly-label" class="h3 mb-0">No anomaly</h3>
+                    </div>
+                    <span id="anomaly-pill" class="badge rounded-pill bg-success-subtle text-success-emphasis">Stable</span>
+                  </div>
+
+                  <p id="anomaly-summary" class="mb-2 text-secondary">
+                    AI anomaly monitoring is ready.
+                  </p>
+                  <p id="anomaly-detail" class="mb-3 small text-secondary">
+                    The model will describe the latest anomaly hypothesis here.
+                  </p>
+                  <p id="anomaly-confidence" class="small text-uppercase text-secondary fw-semibold mb-3">
+                    AI confidence: --
+                  </p>
+
+                  <div>
+                    <p class="small text-uppercase text-secondary fw-semibold mb-2">Top hypotheses</p>
+                    <div id="anomaly-top-list" class="d-flex flex-column gap-2">
+                      <div class="anomaly-hypothesis">
+                        <span class="fw-semibold">No anomaly</span>
+                        <span>100%</span>
+                      </div>
+                    </div>
+                  </div>
                 </div>
               </div>
             </section>
@@ -300,7 +382,7 @@
         </div>
       </div>
 
-      <div class="col-12">
+      <div class="col-12" data-hide-on-console="true">
         <section class="card border-0 shadow-sm dashboard-card machine-shell">
           <div class="card-body p-4">
             <div class="d-flex justify-content-between align-items-start gap-3 mb-4">
@@ -317,14 +399,14 @@
         </section>
       </div>
 
-      <div class="col-12">
+      <div class="col-12" id="console-page" data-page-panel="console">
         <section class="card border-0 shadow-sm dashboard-card console-card">
           <div class="card-body p-4">
             <div class="d-flex justify-content-between align-items-start gap-3 mb-3">
               <div>
                 <h2 class="h4 mb-1">Board Console</h2>
                 <p class="text-secondary mb-0">
-                  Real-time ESP32-S3 console messages mirrored from the MicroPython board over USB serial or Wi-Fi.
+                  Live ESP32-S3 serial console with optional direct input. Sending commands here can interrupt the running telemetry script.
                 </p>
               </div>
               <span id="board-console-status" class="badge rounded-pill bg-secondary-subtle text-secondary-emphasis">Waiting</span>
@@ -332,6 +414,31 @@
             <p id="board-console-note" class="text-secondary mb-3">
               Waiting for console messages from the ESP32-S3.
             </p>
+
+            <div class="console-command-card mb-3">
+              <div class="row g-3 align-items-end">
+                <div class="col-12 col-xl-7">
+                  <label for="console-command-input" class="form-label">Serial command</label>
+                  <input
+                    id="console-command-input"
+                    type="text"
+                    class="form-control"
+                    placeholder="help(), import os, or any MicroPython line"
+                  >
+                </div>
+                <div class="col-12 col-xl-5">
+                  <div class="d-flex flex-wrap gap-2 justify-content-xl-end">
+                    <button id="console-send-button" type="button" class="btn btn-dark">Send Line</button>
+                    <button id="console-interrupt-button" type="button" class="btn btn-outline-warning">Ctrl+C</button>
+                    <button id="console-reset-button" type="button" class="btn btn-outline-danger">Ctrl+D</button>
+                  </div>
+                </div>
+              </div>
+              <p class="small text-secondary mb-0 mt-2">
+                Advanced use: `Ctrl+C` interrupts the current MicroPython program and `Ctrl+D` asks the board for a soft reset.
+              </p>
+            </div>
+
             <div id="board-console-output" class="console-output" role="log" aria-live="polite" aria-relevant="additions text">
               <div class="console-placeholder">
                 No board console messages yet. Start the ESP32-S3 telemetry script to stream logs here.

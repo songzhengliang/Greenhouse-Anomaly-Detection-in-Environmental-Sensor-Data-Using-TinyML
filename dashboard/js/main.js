@@ -1,27 +1,36 @@
 import {
+  applyAnomalyPreset,
   loadBoardLogs,
+  loadAnomalyPresets,
   evaluateManualScenario,
-  loadDemoScenario,
   loadLiveScenario,
+  sendBoardConsoleInput,
   pushPresentationState,
 } from "./api.js";
 import { initializeCharts, renderCharts } from "./charts.js";
 import {
+  clearConsoleCommand,
   initializeUi,
+  readConsoleCommand,
   readManualPayload,
   readOverridePayload,
+  readSelectedPresetId,
   renderBoardConsole,
   renderDashboard,
+  renderPresetCatalog,
+  renderSelectedPresetPreview,
+  setActivePage,
   showBoardConsoleError,
   showError,
+  showPresetCatalogError,
   updateModeButtons,
   getDom,
 } from "./ui.js";
 import { addHistoryPoint, appState, setBoardConsole, setCurrentData } from "./store.js";
 
-let demoTimer = null;
 let liveTimer = null;
 let boardLogTimer = null;
+let currentPage = "live";
 
 function applyData(data) {
   setCurrentData(data);
@@ -36,32 +45,17 @@ async function refreshBoardConsole() {
   renderBoardConsole();
 }
 
-function stopDemoStream() {
-  if (demoTimer) {
-    clearInterval(demoTimer);
-    demoTimer = null;
-    updateModeButtons({ liveActive: Boolean(liveTimer), demoActive: false });
-  }
-}
-
 function stopLiveFeed() {
   if (liveTimer) {
     clearInterval(liveTimer);
     liveTimer = null;
-    updateModeButtons({ liveActive: false, demoActive: Boolean(demoTimer) });
+    updateModeButtons({ liveActive: false });
   }
 }
 
 async function handleManualEvaluate() {
-  stopDemoStream();
   stopLiveFeed();
   const data = await evaluateManualScenario(readManualPayload());
-  applyData(data);
-}
-
-async function handleDemoLoad() {
-  stopLiveFeed();
-  const data = await loadDemoScenario();
   applyData(data);
 }
 
@@ -70,22 +64,18 @@ async function handleLiveLoad() {
   applyData(data);
 }
 
-async function handleToggleDemoStream() {
-  if (demoTimer) {
-    stopDemoStream();
-    return;
+async function startLiveFeed() {
+  await handleLiveLoad();
+  if (!liveTimer) {
+    liveTimer = window.setInterval(async () => {
+      try {
+        await handleLiveLoad();
+      } catch (error) {
+        showError(error.message);
+      }
+    }, 3000);
   }
-
-  stopLiveFeed();
-  await handleDemoLoad();
-  demoTimer = window.setInterval(async () => {
-    try {
-      await handleDemoLoad();
-    } catch (error) {
-      showError(error.message);
-    }
-  }, 2500);
-  updateModeButtons({ liveActive: false, demoActive: true });
+  updateModeButtons({ liveActive: true });
 }
 
 async function handleToggleLiveFeed() {
@@ -93,17 +83,34 @@ async function handleToggleLiveFeed() {
     stopLiveFeed();
     return;
   }
+  await startLiveFeed();
+}
 
-  stopDemoStream();
-  await handleLiveLoad();
-  liveTimer = window.setInterval(async () => {
-    try {
-      await handleLiveLoad();
-    } catch (error) {
-      showError(error.message);
-    }
-  }, 3000);
-  updateModeButtons({ liveActive: true, demoActive: false });
+async function handlePresetApply(presetId) {
+  if (!presetId) {
+    throw new Error("Choose a preset first.");
+  }
+  stopLiveFeed();
+  const data = await applyAnomalyPreset(presetId);
+  applyData(data);
+}
+
+async function handleConsoleSend(text) {
+  const command = String(text || "").trim();
+  if (!command) {
+    throw new Error("Enter a console command first.");
+  }
+  await sendBoardConsoleInput({
+    text: command,
+    append_newline: true,
+  });
+  clearConsoleCommand();
+  await refreshBoardConsole();
+}
+
+async function handleConsoleControl(control) {
+  await sendBoardConsoleInput({ control });
+  await refreshBoardConsole();
 }
 
 function currentPresentationPayload(override = appState.currentPresentation.override) {
@@ -114,7 +121,6 @@ function currentPresentationPayload(override = appState.currentPresentation.over
 }
 
 async function handleAdjust(field, delta) {
-  stopDemoStream();
   const nextOffsets = {
     ...appState.currentPresentation.offsets,
     [field]: Number(appState.currentPresentation.offsets[field]) + Number(delta),
@@ -127,7 +133,6 @@ async function handleAdjust(field, delta) {
 }
 
 async function handleResetOffsets() {
-  stopDemoStream();
   const data = await pushPresentationState({
     offsets: {
       temperature_c: 0,
@@ -140,22 +145,62 @@ async function handleResetOffsets() {
 }
 
 async function handleApplyOverride() {
-  stopDemoStream();
   const data = await pushPresentationState(currentPresentationPayload(readOverridePayload()));
   applyData(data);
 }
 
 async function handleClearOverride() {
-  stopDemoStream();
   const data = await pushPresentationState(currentPresentationPayload(null));
   applyData(data);
+}
+
+async function showPage(page) {
+  currentPage = page;
+  setActivePage(page);
+
+  if (page === "live") {
+    try {
+      await startLiveFeed();
+    } catch (error) {
+      showError(error.message);
+    }
+    return;
+  }
+
+  if (page === "console") {
+    stopLiveFeed();
+    const dom = getDom();
+    window.requestAnimationFrame(() => {
+      dom.consolePage?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+    return;
+  }
+
+  stopLiveFeed();
+  if (!appState.currentData || appState.currentData.mode === "live") {
+    try {
+      await handleManualEvaluate();
+    } catch (error) {
+      showError(error.message);
+    }
+  } else if (appState.currentData) {
+    renderDashboard(appState.currentData);
+  }
 }
 
 async function bootstrap() {
   initializeUi();
   initializeCharts();
   renderBoardConsole();
-  updateModeButtons({ liveActive: false, demoActive: false });
+  setActivePage(currentPage);
+  updateModeButtons({ liveActive: false });
+
+  try {
+    const presetCatalog = await loadAnomalyPresets();
+    renderPresetCatalog(presetCatalog.presets || []);
+  } catch (error) {
+    showPresetCatalogError(error.message);
+  }
 
   try {
     await refreshBoardConsole();
@@ -173,6 +218,18 @@ async function bootstrap() {
 
   const dom = getDom();
 
+  dom.navLiveButton.addEventListener("click", async () => {
+    await showPage("live");
+  });
+
+  dom.navPresetButton.addEventListener("click", async () => {
+    await showPage("preset");
+  });
+
+  dom.navConsoleButton.addEventListener("click", async () => {
+    await showPage("console");
+  });
+
   dom.form.addEventListener("submit", async (event) => {
     event.preventDefault();
     try {
@@ -182,25 +239,9 @@ async function bootstrap() {
     }
   });
 
-  dom.demoButton.addEventListener("click", async () => {
-    try {
-      await handleDemoLoad();
-    } catch (error) {
-      showError(error.message);
-    }
-  });
-
   dom.liveButton.addEventListener("click", async () => {
     try {
       await handleToggleLiveFeed();
-    } catch (error) {
-      showError(error.message);
-    }
-  });
-
-  dom.autoplayButton.addEventListener("click", async () => {
-    try {
-      await handleToggleDemoStream();
     } catch (error) {
       showError(error.message);
     }
@@ -240,11 +281,55 @@ async function bootstrap() {
     });
   });
 
-  try {
-    await handleDemoLoad();
-  } catch (error) {
-    showError(error.message);
-  }
+  dom.presetSelect.addEventListener("change", () => {
+    renderSelectedPresetPreview();
+  });
+
+  dom.applyPresetButton.addEventListener("click", async () => {
+    try {
+      await handlePresetApply(readSelectedPresetId());
+    } catch (error) {
+      showError(error.message);
+    }
+  });
+
+  dom.consoleSendButton.addEventListener("click", async () => {
+    try {
+      await handleConsoleSend(readConsoleCommand());
+    } catch (error) {
+      showError(error.message);
+    }
+  });
+
+  dom.consoleInterruptButton.addEventListener("click", async () => {
+    try {
+      await handleConsoleControl("interrupt");
+    } catch (error) {
+      showError(error.message);
+    }
+  });
+
+  dom.consoleResetButton.addEventListener("click", async () => {
+    try {
+      await handleConsoleControl("soft_reset");
+    } catch (error) {
+      showError(error.message);
+    }
+  });
+
+  dom.consoleCommandInput.addEventListener("keydown", async (event) => {
+    if (event.key !== "Enter") {
+      return;
+    }
+    event.preventDefault();
+    try {
+      await handleConsoleSend(readConsoleCommand());
+    } catch (error) {
+      showError(error.message);
+    }
+  });
+
+  await showPage("live");
 }
 
 bootstrap();

@@ -9,6 +9,7 @@ from machine import Pin, I2C
 import gc
 import time
 
+from board_ai_runtime import BoardAiRuntime
 from scd41_driver import SCD41
 
 try:
@@ -55,7 +56,7 @@ def log_message(message, level="info"):
     )
 
 
-def send_telemetry(co2, temperature, humidity):
+def send_telemetry(co2, temperature, humidity, board_result, gap_seconds):
     emit_event(
         "telemetry",
         {
@@ -63,6 +64,8 @@ def send_telemetry(co2, temperature, humidity):
             "humidity_pct": round(float(humidity), 1),
             "co2_ppm": int(co2),
             "sample_interval_s": SAMPLE_INTERVAL_S,
+            "gap_seconds": round(float(gap_seconds), 1),
+            "board_result": board_result,
         },
     )
     gc.collect()
@@ -107,6 +110,9 @@ def main():
     log_i2c_scan(i2c)
 
     sensor = SCD41(i2c)
+    log_message("Loading on-device AI models...")
+    board_ai = BoardAiRuntime()
+    log_message("On-device AI models loaded.")
 
     try:
         sensor.stop()
@@ -121,6 +127,7 @@ def main():
     )
     time.sleep(INITIAL_WARMUP_S)
     retry_count = 0
+    last_sample_ms = None
 
     while True:
         try:
@@ -147,12 +154,30 @@ def main():
 
             co2, temperature, humidity = reading
             retry_count = 0
+            now_ms = time.ticks_ms()
+            if last_sample_ms is None:
+                gap_seconds = SAMPLE_INTERVAL_S
+            else:
+                gap_seconds = time.ticks_diff(now_ms, last_sample_ms) / 1000.0
+            last_sample_ms = now_ms
+            board_result = board_ai.update(
+                temperature_c=temperature,
+                humidity_pct=humidity,
+                co2_ppm=co2,
+                gap_seconds=gap_seconds,
+            )
             log_message(
-                "CO2={} ppm | Temperature={:.1f} C | Humidity={:.1f}%".format(
-                    int(co2), temperature, humidity
+                "CO2={} ppm | Temperature={:.1f} C | Humidity={:.1f}% | Action={} | Anomaly={}".format(
+                    int(co2),
+                    temperature,
+                    humidity,
+                    ", ".join(
+                        [action["status"] for action in board_result["actions"] if action["active"]]
+                    ) or "idle",
+                    board_result["anomaly"]["display_label"],
                 )
             )
-            send_telemetry(co2, temperature, humidity)
+            send_telemetry(co2, temperature, humidity, board_result, gap_seconds)
             time.sleep(SAMPLE_INTERVAL_S)
 
         except KeyboardInterrupt:

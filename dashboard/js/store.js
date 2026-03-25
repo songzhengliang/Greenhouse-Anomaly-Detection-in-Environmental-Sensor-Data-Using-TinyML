@@ -48,6 +48,23 @@ export function setBoardConsole(boardConsole) {
 }
 
 export function addHistoryPoint(data) {
+  if (Array.isArray(data.history_window) && data.history_window.length) {
+    Object.keys(SENSOR_CONFIG).forEach((field) => {
+      appState.history[field] = data.history_window.map((sample, index) => {
+        const timestamp = Number(sample.timestamp) * 1000 || (Date.now() - ((data.history_window.length - index) * 30000));
+        return {
+          timestamp,
+          label: new Date(timestamp).toLocaleTimeString([], {
+            minute: "2-digit",
+            second: "2-digit",
+          }),
+          value: Number(sample[field]),
+        };
+      });
+    });
+    return;
+  }
+
   const now = Date.now();
   const cutoff = now - HISTORY_WINDOW_MS;
 

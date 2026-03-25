@@ -1,0 +1,117 @@
+{
+  "dataset": "greenhouse_anomaly_dataset.csv",
+  "rows": 5760,
+  "feature_columns": [
+    "temperature_c",
+    "prev_temperature_c",
+    "delta_1_temperature_c",
+    "delta_3_temperature_c",
+    "mean_6_temperature_c",
+    "std_6_temperature_c",
+    "range_6_temperature_c",
+    "unchanged_run_temperature_c",
+    "humidity_pct",
+    "prev_humidity_pct",
+    "delta_1_humidity_pct",
+    "delta_3_humidity_pct",
+    "mean_6_humidity_pct",
+    "std_6_humidity_pct",
+    "range_6_humidity_pct",
+    "unchanged_run_humidity_pct",
+    "co2_ppm",
+    "prev_co2_ppm",
+    "delta_1_co2_ppm",
+    "delta_3_co2_ppm",
+    "mean_6_co2_ppm",
+    "std_6_co2_ppm",
+    "range_6_co2_ppm",
+    "unchanged_run_co2_ppm",
+    "gap_seconds",
+    "gap_ratio",
+    "out_of_range_count",
+    "current_out_of_range",
+    "oscillation_score",
+    "multi_sensor_shift_score",
+    "dominant_sensor_shift_ratio",
+    "temperature_band_gap",
+    "humidity_band_gap",
+    "co2_band_gap"
+  ],
+  "class_labels": [
+    "normal",
+    "temperature_high",
+    "temperature_low",
+    "humidity_high",
+    "humidity_low",
+    "co2_high",
+    "sensor_spike",
+    "sensor_drift",
+    "sensor_stuck",
+    "sensor_dropout",
+    "cross_variable_inconsistency",
+    "out_of_range"
+  ],
+  "accuracy": 0.9757,
+  "per_class": {
+    "normal": {
+      "precision": 0.9778,
+      "recall": 0.9167,
+      "f1_score": 0.9462
+    },
+    "temperature_high": {
+      "precision": 0.9897,
+      "recall": 1.0,
+      "f1_score": 0.9948
+    },
+    "temperature_low": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1_score": 1.0
+    },
+    "humidity_high": {
+      "precision": 0.94,
+      "recall": 0.9792,
+      "f1_score": 0.9592
+    },
+    "humidity_low": {
+      "precision": 0.9691,
+      "recall": 0.9792,
+      "f1_score": 0.9741
+    },
+    "co2_high": {
+      "precision": 0.9896,
+      "recall": 0.9896,
+      "f1_score": 0.9896
+    },
+    "sensor_spike": {
+      "precision": 0.9796,
+      "recall": 1.0,
+      "f1_score": 0.9897
+    },
+    "sensor_drift": {
+      "precision": 0.9121,
+      "recall": 0.8646,
+      "f1_score": 0.8877
+    },
+    "sensor_stuck": {
+      "precision": 0.9596,
+      "recall": 0.9896,
+      "f1_score": 0.9744
+    },
+    "sensor_dropout": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1_score": 1.0
+    },
+    "cross_variable_inconsistency": {
+      "precision": 1.0,
+      "recall": 0.9896,
+      "f1_score": 0.9948
+    },
+    "out_of_range": {
+      "precision": 0.9897,
+      "recall": 1.0,
+      "f1_score": 0.9948
+    }
+  }
+}
