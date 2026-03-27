@@ -113,7 +113,7 @@ def train_action_models() -> tuple[dict, dict]:
             X,
             df[target],
             test_size=0.2,
-            random_state=42,
+            random_state=50,
             shuffle=True,
             stratify=df[target],
         )
@@ -121,7 +121,7 @@ def train_action_models() -> tuple[dict, dict]:
             n_estimators=16,
             max_depth=5,
             min_samples_leaf=2,
-            random_state=42,
+            random_state=50,
         )
         model.fit(X_train, y_train)
         predictions = model.predict(X_test)
@@ -149,7 +149,7 @@ def train_anomaly_model() -> tuple[dict, dict]:
         X,
         y,
         test_size=0.2,
-        random_state=42,
+        random_state=50,
         shuffle=True,
         stratify=y,
     )
@@ -157,7 +157,7 @@ def train_anomaly_model() -> tuple[dict, dict]:
         n_estimators=40,
         max_depth=8,
         min_samples_leaf=3,
-        random_state=42,
+        random_state=50,
         class_weight="balanced_subsample",
         n_jobs=-1,
     )

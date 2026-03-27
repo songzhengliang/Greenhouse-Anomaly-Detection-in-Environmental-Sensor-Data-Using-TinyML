@@ -32,7 +32,7 @@ def main() -> None:
         X,
         y,
         test_size=0.2,
-        random_state=42,
+        random_state=50,
         shuffle=True,
     )
 
@@ -40,7 +40,7 @@ def main() -> None:
         n_estimators=140,
         max_depth=8,
         min_samples_leaf=2,
-        random_state=42,
+        random_state=50,
         n_jobs=-1,
     )
     model = MultiOutputClassifier(base_estimator)

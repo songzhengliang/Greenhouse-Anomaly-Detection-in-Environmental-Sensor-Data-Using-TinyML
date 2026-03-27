@@ -31,7 +31,7 @@ def main() -> None:
         X,
         y,
         test_size=0.2,
-        random_state=42,
+        random_state=50,
         shuffle=True,
         stratify=y,
     )
@@ -40,7 +40,7 @@ def main() -> None:
         n_estimators=220,
         max_depth=14,
         min_samples_leaf=2,
-        random_state=42,
+        random_state=50,
         class_weight="balanced_subsample",
         n_jobs=-1,
     )
