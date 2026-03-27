@@ -5,8 +5,9 @@ import csv
 import random
 from pathlib import Path
 
+from project_paths import ACTION_DATASET_FILE, ensure_parent_dir
 
-OUTPUT_FILE = "greenhouse_action_control_dataset.csv"
+OUTPUT_FILE = ACTION_DATASET_FILE
 DEFAULT_SEED = 42
 SCENARIO_ORDER = [
     "stable",
@@ -207,14 +208,14 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--rows-per-scenario", type=int, default=550)
     parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
-    parser.add_argument("--output", default=OUTPUT_FILE)
+    parser.add_argument("--output", type=Path, default=OUTPUT_FILE)
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
     rows = generate_rows(args.rows_per_scenario, args.seed)
-    output_path = Path(args.output)
+    output_path = ensure_parent_dir(args.output)
     write_dataset(rows, output_path)
     print(f"Wrote {len(rows)} rows to {output_path}")
 

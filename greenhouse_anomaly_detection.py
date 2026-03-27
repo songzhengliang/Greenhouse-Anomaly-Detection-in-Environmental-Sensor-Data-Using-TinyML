@@ -4,13 +4,12 @@ import copy
 import math
 import pickle
 import statistics
-from pathlib import Path
 
 import pandas as pd
 
+from project_paths import ANOMALY_MODEL_FILE
 
-ROOT = Path(__file__).resolve().parent
-MODEL_FILE = ROOT / "anomaly_model.pkl"
+MODEL_FILE = ANOMALY_MODEL_FILE
 WINDOW_SIZE = 6
 NOMINAL_SAMPLE_INTERVAL_S = 30.0
 SENSOR_FIELDS = ("temperature_c", "humidity_pct", "co2_ppm")

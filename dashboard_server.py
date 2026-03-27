@@ -21,6 +21,7 @@ from presentation_presets import (
     get_presentation_preset,
     presentation_preset_catalog,
 )
+from project_paths import ACTION_DATASET_FILE, DASHBOARD_DIR, ROOT
 
 try:
     import serial
@@ -29,9 +30,7 @@ except ImportError:
     serial = None
     list_ports = None
 
-ROOT = Path(__file__).resolve().parent
-DASHBOARD_DIR = ROOT / "dashboard"
-DATASET_FILE = ROOT / "greenhouse_action_control_dataset.csv"
+DATASET_FILE = ACTION_DATASET_FILE
 LIVE_TIMEOUT_SECONDS = 75
 BOARD_LOG_LIMIT = 200
 DEFAULT_SERIAL_BAUD = 115200

@@ -13,9 +13,10 @@ from greenhouse_anomaly_detection import (
     WINDOW_SIZE,
     extract_anomaly_features,
 )
+from project_paths import ANOMALY_DATASET_FILE, ensure_parent_dir
 
 
-OUTPUT_FILE = "greenhouse_anomaly_dataset.csv"
+OUTPUT_FILE = ANOMALY_DATASET_FILE
 DEFAULT_SEED = 42
 ROWS_PER_SCENARIO = 480
 
@@ -249,14 +250,14 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--rows-per-scenario", type=int, default=ROWS_PER_SCENARIO)
     parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
-    parser.add_argument("--output", default=OUTPUT_FILE)
+    parser.add_argument("--output", type=Path, default=OUTPUT_FILE)
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
     rows = generate_rows(args.rows_per_scenario, args.seed)
-    output_path = Path(args.output)
+    output_path = ensure_parent_dir(args.output)
     write_dataset(rows, output_path)
     print(f"Wrote {len(rows)} rows to {output_path}")
 

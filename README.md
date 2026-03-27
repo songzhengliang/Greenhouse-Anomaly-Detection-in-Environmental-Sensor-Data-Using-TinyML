@@ -71,6 +71,10 @@ python3 -m pip install pyserial
 - `dashboard_server.py`: laptop HTTP server and USB serial bridge
 - `start_everything.py`: one-command launcher for the laptop side
 - `upload_to_board.py`: board file synchronizer used by `start_everything.py`
+- `data/`: generated training datasets and legacy source data
+- `models/`: trained desktop model bundles and metrics
+- `legacy/`: older TinyML air-quality prototype scripts kept for reference
+- `diagnostics/`: one-off board and sensor test scripts
 - `dashboard/`: webpage files
 - `board_config.example.py`: template config for the board
 - `board_config.py`: real board config used by the ESP32-S3
@@ -376,7 +380,12 @@ Check:
 
 - `greenhouse_control.py`: greenhouse decision engine
 - `dashboard_server.py`: laptop server and USB serial bridge
+- `project_paths.py`: shared filesystem paths for datasets and model artifacts
 - `dashboard/`: webpage UI
+- `data/`: training datasets used by the desktop and board training scripts
+- `models/`: trained desktop action and anomaly models plus metrics
+- `legacy/`: older air-quality demo scripts from the earlier project phase
+- `diagnostics/`: hardware test utilities that are not part of the main dashboard flow
 - `esp32_usb_dashboard.py`: MicroPython USB serial board program
 - `esp32_wifi_dashboard.py`: MicroPython Wi-Fi board program
 - `scd41_driver.py`: SCD41 driver for MicroPython

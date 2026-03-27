@@ -3,15 +3,14 @@ from __future__ import annotations
 import copy
 import pickle
 from dataclasses import asdict
-from pathlib import Path
 
 import pandas as pd
 
 from greenhouse_control import Thresholds, evaluate_greenhouse
+from project_paths import ACTION_MODEL_FILE
 
 
-ROOT = Path(__file__).resolve().parent
-MODEL_FILE = ROOT / "action_model.pkl"
+MODEL_FILE = ACTION_MODEL_FILE
 FEATURE_COLUMNS = ["temperature_c", "humidity_pct", "co2_ppm"]
 TARGET_TO_ACTION = {
     "heater_on": {

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import pickle
-from pathlib import Path
 
 import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
@@ -10,11 +9,17 @@ from sklearn.metrics import accuracy_score, classification_report
 from sklearn.model_selection import train_test_split
 
 from greenhouse_anomaly_detection import ANOMALY_LABELS, FEATURE_COLUMNS
+from project_paths import (
+    ANOMALY_DATASET_FILE,
+    ANOMALY_MODEL_FILE,
+    ANOMALY_MODEL_METRICS_FILE,
+    ensure_parent_dir,
+)
 
 
-DATASET_FILE = Path("greenhouse_anomaly_dataset.csv")
-MODEL_FILE = Path("anomaly_model.pkl")
-METRICS_FILE = Path("anomaly_model_metrics.json")
+DATASET_FILE = ANOMALY_DATASET_FILE
+MODEL_FILE = ANOMALY_MODEL_FILE
+METRICS_FILE = ANOMALY_MODEL_METRICS_FILE
 
 
 def main() -> None:
@@ -74,9 +79,11 @@ def main() -> None:
         "metrics": metrics,
     }
 
+    ensure_parent_dir(MODEL_FILE)
     with MODEL_FILE.open("wb") as handle:
         pickle.dump(bundle, handle)
 
+    ensure_parent_dir(METRICS_FILE)
     with METRICS_FILE.open("w", encoding="utf-8") as handle:
         json.dump(metrics, handle, indent=2)
 

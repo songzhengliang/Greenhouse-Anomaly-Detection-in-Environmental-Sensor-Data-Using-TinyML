@@ -10,13 +10,17 @@ from sklearn.metrics import accuracy_score, classification_report
 from sklearn.model_selection import train_test_split
 
 from greenhouse_anomaly_detection import ANOMALY_LABELS, FEATURE_COLUMNS
+from project_paths import (
+    ACTION_DATASET_FILE,
+    ANOMALY_DATASET_FILE,
+    BOARD_MODEL_METRICS_FILE,
+    ROOT,
+    ensure_parent_dir,
+)
 
 
-ROOT = Path(__file__).resolve().parent
-ACTION_DATASET_FILE = ROOT / "greenhouse_action_control_dataset.csv"
-ANOMALY_DATASET_FILE = ROOT / "greenhouse_anomaly_dataset.csv"
 MANIFEST_FILE = ROOT / "board_model_manifest.py"
-METRICS_FILE = ROOT / "board_model_metrics.json"
+METRICS_FILE = BOARD_MODEL_METRICS_FILE
 
 ACTION_TARGETS = [
     "heater_on",
@@ -213,6 +217,7 @@ def main() -> None:
         "action_models": action_metrics,
         "anomaly_model": anomaly_metrics,
     }
+    ensure_parent_dir(METRICS_FILE)
     METRICS_FILE.write_text(json.dumps(metrics, indent=2), encoding="utf-8")
     print(json.dumps(metrics, indent=2))
 
