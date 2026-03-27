@@ -70,6 +70,7 @@ python3 -m pip install pyserial
 
 - `dashboard_server.py`: laptop HTTP server and USB serial bridge
 - `start_everything.py`: one-command launcher for the laptop side
+- `upload_to_board.py`: board file synchronizer used by `start_everything.py`
 - `dashboard/`: webpage files
 - `board_config.example.py`: template config for the board
 - `board_config.py`: real board config used by the ESP32-S3
@@ -77,6 +78,45 @@ python3 -m pip install pyserial
 - `esp32_wifi_dashboard.py`: MicroPython board program for Wi-Fi mode
 - `scd41_driver.py`: MicroPython SCD41 driver
 - `main.py`: board startup file that currently launches USB mode
+
+## Quick Start With `start_everything.py`
+
+This is the recommended way to launch the whole system.
+
+From the project folder, run:
+
+```bash
+python3 start_everything.py
+```
+
+What happens next:
+
+1. the script checks whether the ESP32-S3 is connected
+2. if the board is found, it compares the local board files with the copies on the board
+3. if files are missing or outdated, it uploads the changed files automatically
+4. if anything changed, it soft-resets the board so the new code starts
+5. it launches the dashboard server on your laptop
+6. it opens the dashboard in your browser
+
+If the board is not connected yet, the script still starts the server and leaves it waiting for the ESP32-S3.
+
+Useful options:
+
+```bash
+python3 start_everything.py --skip-board-sync
+python3 start_everything.py --skip-board-config
+python3 start_everything.py --board-mode wifi
+python3 start_everything.py --port 8010
+python3 start_everything.py --emlearn-trees /path/to/emlearn_trees.py
+```
+
+Notes:
+
+- `--skip-board-sync` keeps the old behavior and starts the server without checking the board files first
+- `--skip-board-config` avoids overwriting `board_config.py` on the board
+- `--board-mode wifi` makes the generated `main.py` boot the Wi-Fi board client instead of the USB one
+- if port `8000` is already busy, use `--port 8010` or stop the existing server first
+- if the script warns about `emlearn_trees.py`, either pass it with `--emlearn-trees` or make sure the board already has that file
 
 ## Step 1: Prepare the Board Config
 
@@ -103,6 +143,8 @@ For Wi-Fi mode, these fields also matter:
 ## Step 2: Put the Files on the ESP32-S3
 
 Use a MicroPython IDE such as Thonny.
+
+If you use `python3 start_everything.py`, this manual upload step is optional because the launcher can sync the board files for you automatically.
 
 Select:
 
@@ -152,9 +194,22 @@ That launcher will:
 - open the dashboard in your browser
 - check whether the board files are already current
 - upload changed or missing board files before launch
+- soft-reset the board only if files actually changed
 - start the laptop server
 - auto-detect the ESP32-S3 USB serial port
 - keep waiting if the board is not visible yet
+
+The normal command is:
+
+```bash
+python3 start_everything.py
+```
+
+If you do not want the automatic board file check for one run, use:
+
+```bash
+python3 start_everything.py --skip-board-sync
+```
 
 If you want the manual command instead, run:
 
@@ -219,13 +274,15 @@ Once the system is working, the page will show:
 
 This is the shortest working path:
 
-1. upload `board_config.py`, `scd41_driver.py`, `esp32_usb_dashboard.py`, and `main.py` to the board
-2. close the IDE serial connection
-3. run `python3 start_everything.py`
-4. press `EN` or `RST`
-5. wait 35 seconds
-6. open `http://127.0.0.1:8000`
-7. click `Watch ESP32-S3 Feed`
+1. make sure local `board_config.py` is ready
+2. plug in the ESP32-S3 over USB
+3. close the IDE serial connection
+4. run `python3 start_everything.py`
+5. let the launcher sync the board files if needed
+6. if the board was not reset automatically, press `EN` or `RST`
+7. wait 35 seconds
+8. open `http://127.0.0.1:8000`
+9. click `Watch ESP32-S3 Feed`
 
 ## Optional Wi-Fi Workflow
 
