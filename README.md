@@ -66,6 +66,16 @@ If `pyserial` is missing on your laptop, install it:
 python3 -m pip install pyserial
 ```
 
+## Run The Test Suite
+
+The project includes a standard-library `unittest` suite under `tests/`.
+
+Run everything with:
+
+```bash
+python3 -m unittest discover -s tests
+```
+
 ## Important Files
 
 - `dashboard_server.py`: laptop HTTP server and USB serial bridge

@@ -11,8 +11,9 @@ from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
 from urllib.parse import urlparse
 
-from ai_greenhouse_control import evaluate_greenhouse_ai
+from ai_greenhouse_control import TARGET_TO_ACTION, evaluate_greenhouse_ai
 from greenhouse_anomaly_detection import (
+    ANOMALY_METADATA,
     NOMINAL_SAMPLE_INTERVAL_S,
     evaluate_greenhouse_anomaly_ai,
 )
@@ -35,6 +36,7 @@ LIVE_TIMEOUT_SECONDS = 75
 BOARD_LOG_LIMIT = 200
 DEFAULT_SERIAL_BAUD = 115200
 SERIAL_EVENT_PREFIX = "GHUSB "
+SERIAL_TELEMETRY_PREFIX = "GHTLM|"
 ANOMALY_HISTORY_LIMIT = 18
 DEFAULT_LIVE_SENSORS = {
     "temperature_c": 24.0,
@@ -42,6 +44,10 @@ DEFAULT_LIVE_SENSORS = {
     "co2_ppm": 900,
 }
 STATE_RANK = {"stable": 0, "warning": 1, "critical": 2}
+ACTION_KEY_TO_SPEC = {
+    spec["key"]: spec for spec in TARGET_TO_ACTION.values()
+}
+ACTION_KEY_ORDER = ("heater", "cooling_fan", "ventilation", "mister")
 
 LIVE_STATE_LOCK = threading.Lock()
 LIVE_STATE = {
@@ -193,6 +199,240 @@ def presentation_is_active(presentation_state: dict) -> bool:
 
 def promote_state(current: str, incoming: str) -> str:
     return incoming if STATE_RANK.get(incoming, 0) > STATE_RANK.get(current, 0) else current
+
+
+def _safe_confidence(value: object, default: float = 0.0) -> float:
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return default
+    return max(0.0, min(1.0, numeric))
+
+
+def _expand_compact_actions(compact_actions: list[dict], sensors: dict) -> tuple[list[dict], list[dict], str]:
+    compact_by_key = {
+        str(item.get("key", "")).strip(): item
+        for item in compact_actions
+        if isinstance(item, dict)
+    }
+    actions = []
+    triggered_conditions = []
+    overall_state = "stable"
+
+    for key in ACTION_KEY_ORDER:
+        spec = ACTION_KEY_TO_SPEC[key]
+        item = compact_by_key.get(key, {})
+        active = bool(item.get("active", False))
+        confidence = _safe_confidence(item.get("confidence"), 0.0)
+        status = spec["active_status"] if active else "idle"
+        reason_base = spec["active_reason"] if active else spec["idle_reason"]
+        actions.append(
+            {
+                "key": key,
+                "label": spec["label"],
+                "status": status,
+                "active": active,
+                "reason": f"{reason_base} Confidence: {confidence:.0%}.",
+                "confidence": round(confidence, 3),
+                "positive_confidence": round(confidence, 3),
+                "source": "On-device AI",
+            }
+        )
+
+        if not active:
+            continue
+
+        severity = "critical" if confidence >= 0.85 else "warning"
+        overall_state = promote_state(overall_state, severity)
+        triggered_conditions.append(
+            {
+                "condition": spec["condition"],
+                "label": spec["condition_label"],
+                "severity": severity,
+                "recommended_action": spec["recommended_action"],
+                "detail": (
+                    f"On-device AI confidence {confidence:.0%} based on "
+                    f"{sensors['temperature_c']:.1f} C, {sensors['humidity_pct']:.1f}%, "
+                    f"and {sensors['co2_ppm']} ppm."
+                ),
+            }
+        )
+
+    return actions, triggered_conditions, overall_state
+
+
+def _expand_compact_anomaly(compact_anomaly: dict, sensors: dict, gap_seconds: float) -> dict:
+    label = str(compact_anomaly.get("label", "normal")).strip() or "normal"
+    metadata = ANOMALY_METADATA.get(label, ANOMALY_METADATA["normal"])
+    confidence = _safe_confidence(
+        compact_anomaly.get("confidence"),
+        1.0 if label == "normal" else 0.0,
+    )
+    top_predictions = []
+
+    for item in compact_anomaly.get("top_predictions", []):
+        if not isinstance(item, dict):
+            continue
+        item_label = str(item.get("label", "normal")).strip() or "normal"
+        item_metadata = ANOMALY_METADATA.get(item_label, ANOMALY_METADATA["normal"])
+        top_predictions.append(
+            {
+                "label": item_label,
+                "display_label": item_metadata["display_label"],
+                "confidence": round(_safe_confidence(item.get("confidence"), 0.0), 3),
+            }
+        )
+        if len(top_predictions) >= 3:
+            break
+
+    if not top_predictions:
+        top_predictions.append(
+            {
+                "label": label,
+                "display_label": metadata["display_label"],
+                "confidence": round(confidence, 3),
+            }
+        )
+
+    return {
+        "label": label,
+        "display_label": metadata["display_label"],
+        "severity": metadata["severity"],
+        "summary": metadata["summary"],
+        "detail": (
+            "Window end: %.1f C, %.1f%%, %d ppm. Gap %d s. %s"
+            % (
+                sensors["temperature_c"],
+                sensors["humidity_pct"],
+                int(round(sensors["co2_ppm"])),
+                int(round(gap_seconds)),
+                metadata["description"],
+            )
+        ),
+        "confidence": round(confidence, 3),
+        "anomaly_score": round(_safe_confidence(compact_anomaly.get("anomaly_score"), 0.0), 3),
+        "decision_engine": str(compact_anomaly.get("decision_engine") or "board_anomaly_ai"),
+        "model_available": bool(compact_anomaly.get("model_available", True)),
+        "history_ready": bool(compact_anomaly.get("history_ready", False)),
+        "window_size": int(compact_anomaly.get("window_size", 6)),
+        "top_predictions": top_predictions,
+    }
+
+
+def normalize_board_result(
+    board_result: dict | None,
+    sensors: dict,
+    thresholds: Thresholds,
+    gap_seconds: float,
+) -> dict | None:
+    if not isinstance(board_result, dict):
+        return None
+
+    if board_result.get("format") != "compact_v1":
+        return copy.deepcopy(board_result)
+
+    actions, triggered_conditions, action_state = _expand_compact_actions(
+        board_result.get("actions", []),
+        sensors,
+    )
+    anomaly = _expand_compact_anomaly(board_result.get("anomaly", {}), sensors, gap_seconds)
+    overall_state = promote_state(action_state, anomaly["severity"])
+    active_actions = [action["status"] for action in actions if action["active"]]
+    summary = (
+        "On-device AI predicts all virtual machines can remain idle."
+        if not active_actions
+        else "On-device AI recommended virtual actions: " + ", ".join(active_actions) + "."
+    )
+    if anomaly["label"] != "normal":
+        summary = summary + " " + anomaly["summary"]
+
+    return {
+        "sensors": copy.deepcopy(sensors),
+        "thresholds": copy.deepcopy(thresholds.__dict__),
+        "overall_state": overall_state,
+        "summary": summary,
+        "triggered_conditions": triggered_conditions,
+        "actions": actions,
+        "decision_engine": str(board_result.get("decision_engine") or "board_on_device_ai"),
+        "model_available": bool(board_result.get("model_available", True)),
+        "on_device": bool(board_result.get("on_device", True)),
+        "anomaly": anomaly,
+    }
+
+
+def parse_compact_telemetry_line(line: str) -> dict:
+    parts = line.split("|")
+    if len(parts) != 20 or parts[0] != SERIAL_TELEMETRY_PREFIX.rstrip("|"):
+        raise ValueError("unexpected telemetry line shape")
+
+    (
+        _prefix,
+        device_id,
+        temperature_c,
+        humidity_pct,
+        co2_ppm,
+        gap_seconds,
+        heater_active,
+        heater_confidence,
+        cooling_active,
+        cooling_confidence,
+        ventilation_active,
+        ventilation_confidence,
+        mister_active,
+        mister_confidence,
+        anomaly_label,
+        anomaly_confidence,
+        anomaly_score,
+        anomaly_engine,
+        history_ready,
+        window_size,
+    ) = parts
+
+    def to_confidence(raw: str) -> float:
+        return round(max(0.0, min(1.0, int(raw) / 1000.0)), 3)
+
+    return {
+        "device_id": device_id,
+        "temperature_c": float(temperature_c),
+        "humidity_pct": float(humidity_pct),
+        "co2_ppm": int(float(co2_ppm)),
+        "gap_seconds": float(gap_seconds),
+        "board_result": {
+            "format": "compact_v1",
+            "decision_engine": "board_on_device_ai",
+            "model_available": True,
+            "on_device": True,
+            "actions": [
+                {"key": "heater", "active": heater_active == "1", "confidence": to_confidence(heater_confidence)},
+                {
+                    "key": "cooling_fan",
+                    "active": cooling_active == "1",
+                    "confidence": to_confidence(cooling_confidence),
+                },
+                {
+                    "key": "ventilation",
+                    "active": ventilation_active == "1",
+                    "confidence": to_confidence(ventilation_confidence),
+                },
+                {"key": "mister", "active": mister_active == "1", "confidence": to_confidence(mister_confidence)},
+            ],
+            "anomaly": {
+                "label": anomaly_label or "normal",
+                "confidence": to_confidence(anomaly_confidence),
+                "anomaly_score": to_confidence(anomaly_score),
+                "decision_engine": anomaly_engine or "board_anomaly_ai",
+                "model_available": True,
+                "history_ready": history_ready == "1",
+                "window_size": int(window_size),
+                "top_predictions": [
+                    {
+                        "label": anomaly_label or "normal",
+                        "confidence": to_confidence(anomaly_confidence),
+                    }
+                ],
+            },
+        },
+    }
 
 
 def apply_presentation_controls(raw_sensors: dict, presentation_state: dict) -> dict:
@@ -458,7 +698,7 @@ def open_serial_connection(port: str, baudrate: int):
     connection = serial.Serial()
     connection.port = port
     connection.baudrate = baudrate
-    connection.timeout = 1.0
+    connection.timeout = 0.2
     connection.write_timeout = 1.0
     connection.rtscts = False
     connection.dsrdtr = False
@@ -476,6 +716,19 @@ def open_serial_connection(port: str, baudrate: int):
 def handle_serial_event(raw_line: str, port: str) -> None:
     line = raw_line.strip()
     if not line:
+        return
+
+    if line.startswith(SERIAL_TELEMETRY_PREFIX):
+        try:
+            store_live_telemetry(parse_compact_telemetry_line(line))
+        except (KeyError, ValueError, TypeError) as exc:
+            store_board_log(
+                {
+                    "device_id": default_board_device_id(),
+                    "level": "error",
+                    "message": f"Invalid compact USB telemetry from {port}: {exc}",
+                }
+            )
         return
 
     if not line.startswith(SERIAL_EVENT_PREFIX):
@@ -600,12 +853,26 @@ class SerialBridge(threading.Thread):
                     self.connection = connection
                 self.set_status(connected=True, port=port, error=None)
                 print(f"USB serial bridge attached to {port}.")
+                receive_buffer = b""
 
                 while not self.stop_event.is_set():
-                    raw = connection.readline()
+                    raw = connection.read(512)
                     if not raw:
                         continue
-                    handle_serial_event(raw.decode("utf-8", "replace"), port)
+                    receive_buffer += raw
+                    while b"\n" in receive_buffer:
+                        raw_line, receive_buffer = receive_buffer.split(b"\n", 1)
+                        handle_serial_event(raw_line.decode("utf-8", "replace"), port)
+
+                    if len(receive_buffer) > 16384:
+                        store_board_log(
+                            {
+                                "device_id": default_board_device_id(),
+                                "level": "warning",
+                                "message": "USB serial receive buffer overflowed before a newline arrived. Clearing buffered data.",
+                            }
+                        )
+                        receive_buffer = b""
 
             except Exception as exc:
                 self.set_status(connected=False, port=port, error=str(exc))
@@ -734,10 +1001,20 @@ def current_live_payload() -> dict:
 
 def store_live_telemetry(payload: dict) -> dict:
     thresholds = Thresholds.from_mapping(payload.get("thresholds"))
+    gap_seconds = max(
+        1.0,
+        float(payload.get("gap_seconds", payload.get("sample_interval_s", NOMINAL_SAMPLE_INTERVAL_S))),
+    )
     raw_sensors = normalize_sensors(
         temperature_c=float(payload["temperature_c"]),
         humidity_pct=float(payload["humidity_pct"]),
         co2_ppm=float(payload["co2_ppm"]),
+    )
+    board_result = normalize_board_result(
+        payload.get("board_result"),
+        raw_sensors,
+        thresholds,
+        gap_seconds,
     )
 
     with LIVE_STATE_LOCK:
@@ -745,7 +1022,17 @@ def store_live_telemetry(payload: dict) -> dict:
         LIVE_STATE["thresholds"] = copy.deepcopy(thresholds.__dict__)
         LIVE_STATE["device_id"] = str(payload.get("device_id", "esp32-s3-greenhouse"))
         LIVE_STATE["received_at"] = time.time()
-        LIVE_STATE["board_result"] = copy.deepcopy(payload.get("board_result"))
+        LIVE_STATE["board_result"] = copy.deepcopy(board_result)
+
+    sample_log = str(payload.get("sample_log", "")).strip()
+    if sample_log:
+        store_board_log(
+            {
+                "device_id": str(payload.get("device_id", "esp32-s3-greenhouse")),
+                "level": "info",
+                "message": sample_log,
+            }
+        )
 
     append_mode_history("live", raw_sensors, timestamp=LIVE_STATE["received_at"])
     response = current_live_payload()

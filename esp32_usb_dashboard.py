@@ -5,9 +5,10 @@ It reads the SCD41 sensor and emits structured serial lines that the
 laptop dashboard server can parse over the current USB connection.
 """
 
-from machine import Pin, I2C
 import gc
+import sys
 import time
+from machine import Pin, I2C
 
 from board_ai_runtime import BoardAiRuntime
 from scd41_driver import SCD41
@@ -24,6 +25,7 @@ except ImportError:
 
 
 SERIAL_EVENT_PREFIX = "GHUSB "
+SERIAL_TELEMETRY_PREFIX = "GHTLM "
 DEVICE_ID = getattr(config, "DEVICE_ID", "esp32-s3-greenhouse-1")
 
 I2C_BUS = int(getattr(config, "I2C_BUS", 0))
@@ -43,7 +45,19 @@ def emit_event(kind, payload):
         "device_id": DEVICE_ID,
     }
     message.update(payload)
-    print(SERIAL_EVENT_PREFIX + json.dumps(message))
+    sys.stdout.write(SERIAL_EVENT_PREFIX + json.dumps(message) + "\n")
+    try:
+        sys.stdout.flush()
+    except Exception:
+        pass
+
+
+def emit_line(text):
+    sys.stdout.write(text + "\n")
+    try:
+        sys.stdout.flush()
+    except Exception:
+        pass
 
 
 def log_message(message, level="info"):
@@ -56,18 +70,100 @@ def log_message(message, level="info"):
     )
 
 
-def send_telemetry(co2, temperature, humidity, board_result, gap_seconds):
-    emit_event(
-        "telemetry",
-        {
-            "temperature_c": round(float(temperature), 1),
-            "humidity_pct": round(float(humidity), 1),
-            "co2_ppm": int(co2),
-            "sample_interval_s": SAMPLE_INTERVAL_S,
-            "gap_seconds": round(float(gap_seconds), 1),
-            "board_result": board_result,
+def compact_board_result(board_result):
+    compact_actions = []
+    for action in board_result.get("actions", []):
+        compact_actions.append(
+            {
+                "key": action.get("key"),
+                "active": bool(action.get("active", False)),
+                "confidence": round(float(action.get("confidence", 0.0)), 3),
+            }
+        )
+
+    anomaly = board_result.get("anomaly", {})
+    compact_predictions = []
+    for item in anomaly.get("top_predictions", [])[:3]:
+        compact_predictions.append(
+            {
+                "label": item.get("label", "normal"),
+                "confidence": round(float(item.get("confidence", 0.0)), 3),
+            }
+        )
+
+    return {
+        "format": "compact_v1",
+        "decision_engine": board_result.get("decision_engine", "board_on_device_ai"),
+        "model_available": bool(board_result.get("model_available", True)),
+        "on_device": True,
+        "actions": compact_actions,
+        "anomaly": {
+            "label": anomaly.get("label", "normal"),
+            "confidence": round(float(anomaly.get("confidence", 0.0)), 3),
+            "anomaly_score": round(float(anomaly.get("anomaly_score", 0.0)), 3),
+            "decision_engine": anomaly.get("decision_engine", "board_anomaly_ai"),
+            "model_available": bool(anomaly.get("model_available", True)),
+            "history_ready": bool(anomaly.get("history_ready", False)),
+            "window_size": int(anomaly.get("window_size", 6)),
+            "top_predictions": compact_predictions,
         },
+    }
+
+
+def _confidence_milli(value):
+    return int(round(float(value) * 1000))
+
+
+def format_sample_log(co2, temperature, humidity, board_result):
+    active_actions = [
+        action["status"]
+        for action in board_result.get("actions", [])
+        if action.get("active")
+    ]
+    action_text = ", ".join(active_actions) if active_actions else "idle"
+    anomaly = board_result.get("anomaly", {})
+    return (
+        "CO2={co2} ppm | Temperature={temperature:.1f} C | Humidity={humidity:.1f}% | "
+        "Action={action} | Anomaly={anomaly}"
+    ).format(
+        co2=int(co2),
+        temperature=float(temperature),
+        humidity=float(humidity),
+        action=action_text,
+        anomaly=anomaly.get("display_label", "No anomaly"),
     )
+
+
+def send_telemetry(co2, temperature, humidity, board_result, gap_seconds):
+    compact = compact_board_result(board_result)
+    actions_by_key = {
+        item["key"]: item
+        for item in compact["actions"]
+    }
+    anomaly = compact["anomaly"]
+    fields = [
+        SERIAL_TELEMETRY_PREFIX.rstrip(),
+        DEVICE_ID,
+        "{:.1f}".format(float(temperature)),
+        "{:.1f}".format(float(humidity)),
+        str(int(co2)),
+        "{:.1f}".format(float(gap_seconds)),
+        "1" if actions_by_key.get("heater", {}).get("active") else "0",
+        str(_confidence_milli(actions_by_key.get("heater", {}).get("confidence", 0.0))),
+        "1" if actions_by_key.get("cooling_fan", {}).get("active") else "0",
+        str(_confidence_milli(actions_by_key.get("cooling_fan", {}).get("confidence", 0.0))),
+        "1" if actions_by_key.get("ventilation", {}).get("active") else "0",
+        str(_confidence_milli(actions_by_key.get("ventilation", {}).get("confidence", 0.0))),
+        "1" if actions_by_key.get("mister", {}).get("active") else "0",
+        str(_confidence_milli(actions_by_key.get("mister", {}).get("confidence", 0.0))),
+        str(anomaly.get("label", "normal")),
+        str(_confidence_milli(anomaly.get("confidence", 0.0))),
+        str(_confidence_milli(anomaly.get("anomaly_score", 0.0))),
+        str(anomaly.get("decision_engine", "board_anomaly_ai")),
+        "1" if anomaly.get("history_ready") else "0",
+        str(int(anomaly.get("window_size", 6))),
+    ]
+    emit_line("|".join(fields))
     gc.collect()
 
 
@@ -166,17 +262,7 @@ def main():
                 co2_ppm=co2,
                 gap_seconds=gap_seconds,
             )
-            log_message(
-                "CO2={} ppm | Temperature={:.1f} C | Humidity={:.1f}% | Action={} | Anomaly={}".format(
-                    int(co2),
-                    temperature,
-                    humidity,
-                    ", ".join(
-                        [action["status"] for action in board_result["actions"] if action["active"]]
-                    ) or "idle",
-                    board_result["anomaly"]["display_label"],
-                )
-            )
+            log_message(format_sample_log(co2, temperature, humidity, board_result))
             send_telemetry(co2, temperature, humidity, board_result, gap_seconds)
             time.sleep(SAMPLE_INTERVAL_S)
 
