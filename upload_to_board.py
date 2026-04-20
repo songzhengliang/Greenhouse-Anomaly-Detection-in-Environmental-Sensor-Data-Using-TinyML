@@ -295,9 +295,9 @@ def sync_board(
             temp_main_path = create_temp_main(mode)
             any_changed = upload_file(mpremote_executable, port, temp_main_path, "main.py") or any_changed
 
-        if reset and any_changed:
-            print("Soft-resetting the board...")
-            run_mpremote(mpremote_executable, port, ["soft-reset"])
+        if reset:
+            print("Hard-resetting the board...")
+            run_mpremote(mpremote_executable, port, ["reset"])
 
     finally:
         with contextlib.suppress(FileNotFoundError):

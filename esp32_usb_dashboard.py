@@ -37,6 +37,13 @@ INITIAL_WARMUP_S = int(getattr(config, "INITIAL_WARMUP_S", 35))
 RECOVERY_WARMUP_S = int(getattr(config, "RECOVERY_WARMUP_S", 35))
 SENSOR_RESTART_DELAY_S = float(getattr(config, "SENSOR_RESTART_DELAY_S", 1))
 MAX_NOT_READY_RETRIES = int(getattr(config, "MAX_NOT_READY_RETRIES", 3))
+MEASUREMENT_MODE = str(getattr(config, "MEASUREMENT_MODE", "low_power")).strip().lower()
+SENSOR_FAILURE_BACKOFF_S = int(getattr(config, "SENSOR_FAILURE_BACKOFF_S", 60))
+MODE_READY_TIMEOUTS = {
+    "low_power": max(35, INITIAL_WARMUP_S),
+    "standard": 12,
+    "single_shot": 12,
+}
 
 
 def emit_event(kind, payload):
@@ -178,6 +185,89 @@ def log_i2c_scan(i2c):
         log_message("I2C scan failed: {}".format(exc), level="error")
 
 
+def normalize_measurement_mode(mode):
+    text = str(mode or "low_power").strip().lower()
+    if text in ("standard", "standard_periodic", "periodic"):
+        return "standard"
+    if text in ("single", "single_shot", "single-shot", "oneshot", "one_shot"):
+        return "single_shot"
+    return "low_power"
+
+
+def measurement_mode_plan(preferred_mode):
+    preferred = normalize_measurement_mode(preferred_mode)
+    plan = []
+    for mode in (preferred, "standard", "single_shot"):
+        if mode not in plan:
+            plan.append(mode)
+    return plan
+
+
+def start_measurement_mode(sensor, mode):
+    if mode == "standard":
+        sensor.start_standard_periodic()
+        return
+    if mode == "single_shot":
+        sensor.start_single_shot()
+        return
+    sensor.start_low_power()
+
+
+def wait_for_ready(sensor, timeout_s):
+    deadline = time.time() + max(1.0, float(timeout_s))
+    last_status = None
+    while time.time() < deadline:
+        status = sensor.data_ready_status()
+        if status:
+            return True, status
+        last_status = status
+        time.sleep(1)
+    return False, last_status
+
+
+def initialize_sensor_mode(sensor, i2c, preferred_mode):
+    log_i2c_scan(i2c)
+    for mode in measurement_mode_plan(preferred_mode):
+        try:
+            sensor.wake_up()
+        except Exception:
+            pass
+        try:
+            sensor.stop()
+        except Exception:
+            pass
+        time.sleep(SENSOR_RESTART_DELAY_S)
+        start_measurement_mode(sensor, mode)
+        timeout_s = MODE_READY_TIMEOUTS[mode]
+        if mode == "low_power":
+            log_message("Waiting for the SCD41 warm-up period ({} seconds)...".format(timeout_s))
+        else:
+            log_message(
+                "Trying SCD41 {} mode for up to {} seconds...".format(
+                    mode.replace("_", " "),
+                    timeout_s,
+                ),
+                level="warning",
+            )
+        ready, status = wait_for_ready(sensor, timeout_s)
+        if ready:
+            log_message("SCD41 measurement mode ready: {}.".format(mode.replace("_", " ")))
+            return mode
+        log_message(
+            "SCD41 {} mode did not produce a ready sample. Last status: {}.".format(
+                mode.replace("_", " "),
+                "crc/error" if status is None else status,
+            ),
+            level="warning",
+        )
+
+    log_message(
+        "SCD41 seen on I2C but never became ready in low power, standard, or single-shot mode. Check sensor power, wiring quality, or hardware.",
+        level="error",
+    )
+    return None
+
+
 def restart_sensor(sensor, wait_s, reason):
     log_message(reason, level="warning")
     try:
@@ -209,24 +299,40 @@ def main():
     log_message("Loading on-device AI models...")
     board_ai = BoardAiRuntime()
     log_message("On-device AI models loaded.")
-
-    try:
-        sensor.stop()
-    except Exception:
-        pass
-
-    sensor.start()
-    log_message(
-        "Waiting for the SCD41 warm-up period ({} seconds)...".format(
-            INITIAL_WARMUP_S
-        )
-    )
-    time.sleep(INITIAL_WARMUP_S)
+    active_mode = initialize_sensor_mode(sensor, i2c, MEASUREMENT_MODE)
     retry_count = 0
     last_sample_ms = None
 
     while True:
         try:
+            if active_mode is None:
+                log_message(
+                    "SCD41 is still not producing measurements. Retrying full sensor recovery in {} seconds.".format(
+                        SENSOR_FAILURE_BACKOFF_S
+                    ),
+                    level="error",
+                )
+                time.sleep(SENSOR_FAILURE_BACKOFF_S)
+                active_mode = initialize_sensor_mode(sensor, i2c, MEASUREMENT_MODE)
+                retry_count = 0
+                last_sample_ms = None
+                continue
+
+            if active_mode == "single_shot":
+                start_measurement_mode(sensor, active_mode)
+                ready, status = wait_for_ready(sensor, MODE_READY_TIMEOUTS["single_shot"])
+                if not ready:
+                    log_message(
+                        "Single-shot measurement did not become ready. Last status: {}.".format(
+                            "crc/error" if status is None else status
+                        ),
+                        level="warning",
+                    )
+                    active_mode = initialize_sensor_mode(sensor, i2c, MEASUREMENT_MODE)
+                    retry_count = 0
+                    last_sample_ms = None
+                    continue
+
             reading = sensor.read()
 
             if not reading:
@@ -238,14 +344,18 @@ def main():
                     level="warning",
                 )
                 if retry_count >= MAX_NOT_READY_RETRIES:
-                    log_i2c_scan(i2c)
-                    restart_sensor(
-                        sensor,
-                        RECOVERY_WARMUP_S,
-                        "Too many consecutive empty SCD41 reads. Restarting sensor.",
+                    status = sensor.data_ready_status()
+                    log_message(
+                        "Too many consecutive empty SCD41 reads. Reinitialising the measurement mode. Last ready status: {}.".format(
+                            "crc/error" if status is None else status
+                        ),
+                        level="warning",
                     )
+                    active_mode = initialize_sensor_mode(sensor, i2c, MEASUREMENT_MODE)
                     retry_count = 0
-                time.sleep(5)
+                    last_sample_ms = None
+                else:
+                    time.sleep(5)
                 continue
 
             co2, temperature, humidity = reading

@@ -40,15 +40,26 @@ class Scd41DriverTests(unittest.TestCase):
 
     def test_is_data_ready_reads_status_flag(self) -> None:
         module = self.import_driver()
-        i2c = FakeI2C([bytes([0x00, 0x01, 0x00])])
+        driver = module.SCD41(FakeI2C([]))
+        status_bytes = bytes([0x00, 0x01, driver._crc8(bytes([0x00, 0x01]))])
+        i2c = FakeI2C([status_bytes])
         driver = module.SCD41(i2c)
         with mock.patch.object(module.time, "sleep", return_value=None):
             self.assertTrue(driver.is_data_ready())
 
+    def test_data_ready_status_returns_none_on_crc_error(self) -> None:
+        module = self.import_driver()
+        i2c = FakeI2C([bytes([0x00, 0x01, 0x00])])
+        driver = module.SCD41(i2c)
+        with mock.patch.object(module.time, "sleep", return_value=None):
+            self.assertIsNone(driver.data_ready_status())
+
     def test_read_returns_decoded_measurement(self) -> None:
         module = self.import_driver()
         measurement = self.build_measurement_payload(module, co2=800, temp_raw=20000, hum_raw=30000)
-        i2c = FakeI2C([bytes([0x00, 0x01, 0x00]), measurement])
+        driver = module.SCD41(FakeI2C([]))
+        status_bytes = bytes([0x00, 0x01, driver._crc8(bytes([0x00, 0x01]))])
+        i2c = FakeI2C([status_bytes, measurement])
         driver = module.SCD41(i2c)
         with mock.patch.object(module.time, "sleep", return_value=None):
             co2, temperature, humidity = driver.read()

@@ -33,6 +33,7 @@ except ImportError:
 
 DATASET_FILE = ACTION_DATASET_FILE
 LIVE_TIMEOUT_SECONDS = 75
+BOARD_FAULT_GRACE_SECONDS = 180
 BOARD_LOG_LIMIT = 200
 DEFAULT_SERIAL_BAUD = 115200
 SERIAL_EVENT_PREFIX = "GHUSB "
@@ -657,6 +658,35 @@ def current_board_log_payload() -> dict:
     }
 
 
+def looks_like_partial_serial_fragment(line: str) -> bool:
+    text = str(line).strip()
+    if not text:
+        return False
+
+    tokens = (
+        '"kind":',
+        '"device_id":',
+        '"temperature_c":',
+        '"humidity_pct":',
+        '"co2_ppm":',
+        '"decision_engine":',
+        '"history_ready":',
+        '"anomaly_score":',
+        '"top_predictions":',
+        '"model_available":',
+    )
+    if not any(token in text for token in tokens):
+        return False
+
+    if text.startswith((SERIAL_EVENT_PREFIX, SERIAL_TELEMETRY_PREFIX)):
+        return False
+
+    if text in {">>>", "..."}:
+        return False
+
+    return True
+
+
 def serial_bridge_snapshot() -> dict:
     if SERIAL_BRIDGE is None:
         return {
@@ -732,6 +762,8 @@ def handle_serial_event(raw_line: str, port: str) -> None:
         return
 
     if not line.startswith(SERIAL_EVENT_PREFIX):
+        if looks_like_partial_serial_fragment(line):
+            return
         store_board_log(
             {
                 "device_id": default_board_device_id(),
@@ -918,6 +950,106 @@ def default_live_payload() -> dict:
     }
 
 
+def sensor_fault_anomaly(message: str) -> dict:
+    detail = str(message).strip() or "The board reported a sensor startup fault."
+    return {
+        "label": "sensor_unavailable",
+        "display_label": "Sensor unavailable",
+        "severity": "critical",
+        "summary": "The ESP32-S3 is online, but the SCD41 is not producing valid measurements.",
+        "detail": detail,
+        "confidence": 1.0,
+        "anomaly_score": 1.0,
+        "decision_engine": "board_sensor_fault",
+        "model_available": False,
+        "history_ready": False,
+        "window_size": 0,
+        "top_predictions": [
+            {
+                "label": "sensor_unavailable",
+                "display_label": "Sensor unavailable",
+                "confidence": 1.0,
+            }
+        ],
+    }
+
+
+def sensor_fault_actions(message: str) -> list[dict]:
+    detail = str(message).strip() or "Board reported a sensor startup fault."
+    return [
+        {
+            "key": "heater",
+            "label": "Heater",
+            "status": "idle",
+            "active": False,
+            "reason": "No live control decision is available because the SCD41 is not ready.",
+        },
+        {
+            "key": "cooling_fan",
+            "label": "Cooling Fan",
+            "status": "idle",
+            "active": False,
+            "reason": "No live control decision is available because the SCD41 is not ready.",
+        },
+        {
+            "key": "ventilation",
+            "label": "Ventilation",
+            "status": "idle",
+            "active": False,
+            "reason": "No live control decision is available because the SCD41 is not ready.",
+        },
+        {
+            "key": "mister",
+            "label": "Misting System",
+            "status": "idle",
+            "active": False,
+            "reason": detail,
+        },
+    ]
+
+
+def current_board_fault_state() -> dict | None:
+    payload = current_board_log_payload()
+    if not payload["connected"]:
+        return None
+
+    logs = payload["logs"]
+    if not logs:
+        return None
+
+    fault_markers = (
+        "never became ready",
+        "not producing measurements",
+        "did not produce a ready sample",
+        "sensor startup fault",
+    )
+    now = time.time()
+    for entry in reversed(logs):
+        level = str(entry.get("level", "info")).strip().lower()
+        if level not in {"warning", "error"}:
+            continue
+
+        message = str(entry.get("message", "")).strip()
+        lowered = message.lower()
+        if not any(marker in lowered for marker in fault_markers):
+            continue
+
+        age_seconds = round(max(0.0, now - float(entry.get("received_at", now))), 1)
+        if age_seconds > BOARD_FAULT_GRACE_SECONDS:
+            return None
+
+        received_at = float(entry.get("received_at", now))
+        return {
+            "device_id": payload["device_id"] or entry.get("device_id"),
+            "received_at": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(received_at)),
+            "age_seconds": payload["age_seconds"],
+            "connected": payload["connected"],
+            "message": message,
+        }
+
+    return None
+
+
 def current_live_payload() -> dict:
     with LIVE_STATE_LOCK:
         state = copy.deepcopy(LIVE_STATE)
@@ -925,7 +1057,28 @@ def current_live_payload() -> dict:
         presentation_state = copy.deepcopy(PRESENTATION_STATE)
 
     if state["received_at"] is None:
-        return default_live_payload()
+        fault_state = current_board_fault_state()
+        if fault_state is None:
+            return default_live_payload()
+
+        payload = default_live_payload()
+        payload.update(
+            {
+                "overall_state": "critical",
+                "summary": (
+                    "Live ESP32-S3 board is connected, but the SCD41 is not producing measurements. "
+                    "See the board console and anomaly detail for the latest recovery status."
+                ),
+                "actions": sensor_fault_actions(fault_state["message"]),
+                "decision_engine": "board_sensor_fault",
+                "device_id": fault_state["device_id"],
+                "connected": fault_state["connected"],
+                "received_at": fault_state["received_at"],
+                "age_seconds": fault_state["age_seconds"],
+                "anomaly": sensor_fault_anomaly(fault_state["message"]),
+            }
+        )
+        return payload
 
     raw_sensors = state["raw_sensors"] or copy.deepcopy(DEFAULT_LIVE_SENSORS)
     board_result = copy.deepcopy(state.get("board_result"))

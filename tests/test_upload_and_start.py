@@ -34,7 +34,7 @@ class UploadAndStartTests(unittest.TestCase):
             changed = upload_to_board.upload_file("mpremote", "/dev/test", Path("board_config.py"), "board_config.py")
         self.assertFalse(changed)
 
-    def test_sync_board_only_resets_when_a_file_changed(self) -> None:
+    def test_sync_board_resets_when_requested_even_if_files_match(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_dir_path = Path(temp_dir)
             local_file = temp_dir_path / "board.py"
@@ -55,7 +55,7 @@ class UploadAndStartTests(unittest.TestCase):
 
         self.assertFalse(changed)
         self.assertEqual(upload_mock.call_count, 2)
-        run_mock.assert_not_called()
+        run_mock.assert_called_once_with(mock.ANY, "/dev/test", ["reset"])
 
     def test_sync_board_resets_after_changes(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -77,7 +77,7 @@ class UploadAndStartTests(unittest.TestCase):
                 )
 
         self.assertTrue(changed)
-        run_mock.assert_called_once()
+        run_mock.assert_called_once_with(mock.ANY, "/dev/test", ["reset"])
 
     def test_maybe_sync_board_skips_when_no_serial_is_requested(self) -> None:
         args = argparse.Namespace(

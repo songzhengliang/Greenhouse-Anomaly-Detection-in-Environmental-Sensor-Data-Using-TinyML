@@ -6,10 +6,13 @@ class SCD41:
     """Minimal SCD41 CO2/temperature/humidity driver for MicroPython."""
 
     ADDRESS = 0x62
-    CMD_START_PERIODIC = 0x21AC
+    CMD_START_LOW_POWER_PERIODIC = 0x21AC
+    CMD_START_STANDARD_PERIODIC = 0x21B1
+    CMD_MEASURE_SINGLE_SHOT = 0x219D
     CMD_READ_MEASUREMENT = 0xEC05
     CMD_STOP_PERIODIC = 0x3F86
     CMD_GET_DATA_READY = 0xE4B8
+    CMD_WAKE_UP = 0x36F6
 
     def __init__(self, i2c):
         self.i2c = i2c
@@ -29,23 +32,44 @@ class SCD41:
                     crc = crc << 1
         return crc & 0xFF
 
-    def start(self):
-        self._send_command(self.CMD_START_PERIODIC)
+    def wake_up(self):
+        self._send_command(self.CMD_WAKE_UP)
+        time.sleep(0.03)
+
+    def start(self, low_power=True):
+        command = self.CMD_START_LOW_POWER_PERIODIC if low_power else self.CMD_START_STANDARD_PERIODIC
+        self._send_command(command)
+        time.sleep(0.02)
+
+    def start_low_power(self):
+        self.start(low_power=True)
+
+    def start_standard_periodic(self):
+        self.start(low_power=False)
+
+    def start_single_shot(self):
+        self._send_command(self.CMD_MEASURE_SINGLE_SHOT)
         time.sleep(0.02)
 
     def stop(self):
         self._send_command(self.CMD_STOP_PERIODIC)
         time.sleep(0.5)
 
-    def is_data_ready(self):
+    def data_ready_status(self):
         try:
             self._send_command(self.CMD_GET_DATA_READY)
-            time.sleep(0.001)
+            time.sleep(0.002)
             status = bytearray(3)
             self.i2c.readfrom_into(self.ADDRESS, status)
-            return (((status[0] << 8) | status[1]) & 0x07FF) != 0
+            if self._crc8(status[:2]) != status[2]:
+                return None
+            return ((status[0] << 8) | status[1]) & 0x07FF
         except Exception:
-            return False
+            return None
+
+    def is_data_ready(self):
+        status = self.data_ready_status()
+        return status is not None and status != 0
 
     def read(self):
         try:

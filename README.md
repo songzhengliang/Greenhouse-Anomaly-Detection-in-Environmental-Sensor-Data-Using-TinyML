@@ -219,6 +219,12 @@ The normal command is:
 python3 start_everything.py
 ```
 
+To stop the dashboard later, run:
+
+```bash
+python3 stop_dashboard.py
+```
+
 If you do not want the automatic board file check for one run, use:
 
 ```bash

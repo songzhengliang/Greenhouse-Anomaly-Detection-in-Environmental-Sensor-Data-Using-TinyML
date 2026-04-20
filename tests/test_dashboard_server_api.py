@@ -145,6 +145,38 @@ class DashboardServerStateTests(unittest.TestCase):
         messages = [item["message"] for item in payload["logs"]]
         self.assertIn("hello", messages)
 
+    def test_current_live_payload_surfaces_recent_sensor_fault(self) -> None:
+        dashboard_server.store_board_log(
+            {
+                "device_id": "esp32-test",
+                "level": "error",
+                "message": (
+                    "SCD41 seen on I2C but never became ready in low power, standard, "
+                    "or single-shot mode. Check sensor power, wiring quality, or hardware."
+                ),
+            }
+        )
+        dashboard_server.store_board_log(
+            {
+                "device_id": "esp32-test",
+                "level": "info",
+                "message": "Waiting for the SCD41 warm-up period (35 seconds)...",
+            }
+        )
+
+        payload = dashboard_server.current_live_payload()
+        self.assertTrue(payload["connected"])
+        self.assertEqual(payload["decision_engine"], "board_sensor_fault")
+        self.assertEqual(payload["anomaly"]["label"], "sensor_unavailable")
+        self.assertEqual(payload["device_id"], "esp32-test")
+
+    def test_handle_serial_event_ignores_partial_json_fragment(self) -> None:
+        dashboard_server.handle_serial_event(
+            '"decision_engine": "board_anomaly_warmup", "history_ready": false}}, "co2_ppm": 988}',
+            "/dev/test",
+        )
+        self.assertEqual(dashboard_server.current_board_logs(), [])
+
     def test_send_serial_console_input_uses_serial_bridge(self) -> None:
         fake_bridge = FakeSerialBridge()
         dashboard_server.SERIAL_BRIDGE = fake_bridge
