@@ -16,6 +16,8 @@ def reset_dashboard_state() -> None:
                 "board_result": None,
             }
         )
+    with dashboard_server.LIVE_STREAM_CONDITION:
+        dashboard_server.LIVE_UPDATE_SEQUENCE = 0
     with dashboard_server.PRESENTATION_STATE_LOCK:
         dashboard_server.PRESENTATION_STATE.update(
             {
@@ -71,6 +73,9 @@ class DashboardServerStateTests(unittest.TestCase):
         self.assertTrue(payload["connected"])
         self.assertEqual(payload["device_id"], "esp32-test")
         self.assertEqual(payload["raw_sensors"]["co2_ppm"], 940)
+        self.assertEqual(payload["sample_sequence"], 1)
+        self.assertEqual(len(payload["history_window"]), 1)
+        self.assertEqual(payload["history_window"][0]["co2_ppm"], 940)
 
     def test_store_live_telemetry_expands_compact_board_result(self) -> None:
         dashboard_server.store_live_telemetry(

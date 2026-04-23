@@ -1,5 +1,20 @@
 import copy
 
+from greenhouse_anomaly_detection import DROPOUT_THRESHOLD_S, NOMINAL_SAMPLE_INTERVAL_S
+
+
+DEFAULT_GAP_SECONDS = int(NOMINAL_SAMPLE_INTERVAL_S)
+DROPOUT_GAP_SECONDS = int(max(DROPOUT_THRESHOLD_S * 1.25, DEFAULT_GAP_SECONDS + 5))
+
+
+def sample(temperature_c, humidity_pct, co2_ppm, gap_seconds=DEFAULT_GAP_SECONDS):
+    return {
+        "temperature_c": temperature_c,
+        "humidity_pct": humidity_pct,
+        "co2_ppm": co2_ppm,
+        "gap_seconds": gap_seconds,
+    }
+
 
 PRESET_DEFINITIONS = [
     {
@@ -9,12 +24,12 @@ PRESET_DEFINITIONS = [
         "target_anomaly": "normal",
         "description": "Healthy rolling window with natural greenhouse variation and no active anomaly.",
         "samples": [
-            {"temperature_c": 23.5, "humidity_pct": 56.0, "co2_ppm": 820, "gap_seconds": 30},
-            {"temperature_c": 24.0, "humidity_pct": 59.0, "co2_ppm": 860, "gap_seconds": 30},
-            {"temperature_c": 24.7, "humidity_pct": 62.0, "co2_ppm": 910, "gap_seconds": 30},
-            {"temperature_c": 24.2, "humidity_pct": 58.0, "co2_ppm": 890, "gap_seconds": 30},
-            {"temperature_c": 23.8, "humidity_pct": 61.0, "co2_ppm": 940, "gap_seconds": 30},
-            {"temperature_c": 24.5, "humidity_pct": 57.0, "co2_ppm": 880, "gap_seconds": 30},
+            sample(24.0, 60.0, 900),
+            sample(24.2, 60.8, 916),
+            sample(23.9, 59.7, 895),
+            sample(24.3, 60.5, 912),
+            sample(24.0, 59.8, 898),
+            sample(24.2, 60.6, 914),
         ],
     },
     {
@@ -24,12 +39,12 @@ PRESET_DEFINITIONS = [
         "target_anomaly": "temperature_high",
         "description": "Sustained hot greenhouse window that should trigger high-temperature detection.",
         "samples": [
-            {"temperature_c": 31.8, "humidity_pct": 58.0, "co2_ppm": 930, "gap_seconds": 30},
-            {"temperature_c": 32.2, "humidity_pct": 57.8, "co2_ppm": 935, "gap_seconds": 30},
-            {"temperature_c": 32.5, "humidity_pct": 57.5, "co2_ppm": 940, "gap_seconds": 30},
-            {"temperature_c": 33.0, "humidity_pct": 57.1, "co2_ppm": 948, "gap_seconds": 30},
-            {"temperature_c": 33.4, "humidity_pct": 56.8, "co2_ppm": 952, "gap_seconds": 30},
-            {"temperature_c": 33.8, "humidity_pct": 56.4, "co2_ppm": 960, "gap_seconds": 30},
+            sample(24.6, 57.8, 924),
+            sample(27.0, 57.4, 932),
+            sample(29.4, 57.0, 938),
+            sample(32.0, 56.7, 944),
+            sample(34.6, 56.5, 951),
+            sample(37.2, 56.2, 958),
         ],
     },
     {
@@ -39,12 +54,12 @@ PRESET_DEFINITIONS = [
         "target_anomaly": "temperature_low",
         "description": "Sustained cold window for demonstrating low-temperature greenhouse alerts.",
         "samples": [
-            {"temperature_c": 16.8, "humidity_pct": 61.0, "co2_ppm": 890, "gap_seconds": 30},
-            {"temperature_c": 16.4, "humidity_pct": 61.2, "co2_ppm": 892, "gap_seconds": 30},
-            {"temperature_c": 16.0, "humidity_pct": 61.4, "co2_ppm": 895, "gap_seconds": 30},
-            {"temperature_c": 15.6, "humidity_pct": 61.5, "co2_ppm": 898, "gap_seconds": 30},
-            {"temperature_c": 15.2, "humidity_pct": 61.7, "co2_ppm": 900, "gap_seconds": 30},
-            {"temperature_c": 14.9, "humidity_pct": 62.0, "co2_ppm": 905, "gap_seconds": 30},
+            sample(24.3, 61.1, 896),
+            sample(22.0, 61.2, 900),
+            sample(19.5, 61.3, 903),
+            sample(17.2, 61.5, 907),
+            sample(15.2, 61.7, 910),
+            sample(13.8, 61.8, 914),
         ],
     },
     {
@@ -54,12 +69,12 @@ PRESET_DEFINITIONS = [
         "target_anomaly": "humidity_high",
         "description": "Very damp greenhouse window for showing persistent high-humidity behaviour.",
         "samples": [
-            {"temperature_c": 22.8, "humidity_pct": 82.0, "co2_ppm": 890, "gap_seconds": 30},
-            {"temperature_c": 22.7, "humidity_pct": 84.0, "co2_ppm": 892, "gap_seconds": 30},
-            {"temperature_c": 22.6, "humidity_pct": 86.0, "co2_ppm": 894, "gap_seconds": 30},
-            {"temperature_c": 22.5, "humidity_pct": 88.0, "co2_ppm": 896, "gap_seconds": 30},
-            {"temperature_c": 22.4, "humidity_pct": 90.0, "co2_ppm": 898, "gap_seconds": 30},
-            {"temperature_c": 22.3, "humidity_pct": 92.0, "co2_ppm": 900, "gap_seconds": 30},
+            sample(24.2, 60.0, 900),
+            sample(24.1, 65.0, 905),
+            sample(24.0, 70.5, 908),
+            sample(23.9, 76.8, 912),
+            sample(23.8, 83.2, 916),
+            sample(23.8, 89.0, 920),
         ],
     },
     {
@@ -69,12 +84,12 @@ PRESET_DEFINITIONS = [
         "target_anomaly": "humidity_low",
         "description": "Dry-air scenario that should push the anomaly model into low-humidity mode.",
         "samples": [
-            {"temperature_c": 23.5, "humidity_pct": 34.0, "co2_ppm": 905, "gap_seconds": 30},
-            {"temperature_c": 23.4, "humidity_pct": 32.0, "co2_ppm": 907, "gap_seconds": 30},
-            {"temperature_c": 23.3, "humidity_pct": 30.0, "co2_ppm": 910, "gap_seconds": 30},
-            {"temperature_c": 23.2, "humidity_pct": 28.0, "co2_ppm": 912, "gap_seconds": 30},
-            {"temperature_c": 23.1, "humidity_pct": 26.0, "co2_ppm": 915, "gap_seconds": 30},
-            {"temperature_c": 23.0, "humidity_pct": 24.0, "co2_ppm": 918, "gap_seconds": 30},
+            sample(24.1, 59.5, 910),
+            sample(24.0, 54.0, 912),
+            sample(23.9, 48.2, 915),
+            sample(23.9, 42.0, 917),
+            sample(23.8, 36.5, 920),
+            sample(23.7, 31.8, 922),
         ],
     },
     {
@@ -84,12 +99,12 @@ PRESET_DEFINITIONS = [
         "target_anomaly": "co2_high",
         "description": "Closed-vent scenario with rising CO2 concentration across the recent window.",
         "samples": [
-            {"temperature_c": 24.2, "humidity_pct": 59.2, "co2_ppm": 1380, "gap_seconds": 30},
-            {"temperature_c": 24.1, "humidity_pct": 59.0, "co2_ppm": 1440, "gap_seconds": 30},
-            {"temperature_c": 24.1, "humidity_pct": 58.8, "co2_ppm": 1510, "gap_seconds": 30},
-            {"temperature_c": 24.0, "humidity_pct": 58.5, "co2_ppm": 1580, "gap_seconds": 30},
-            {"temperature_c": 23.9, "humidity_pct": 58.2, "co2_ppm": 1660, "gap_seconds": 30},
-            {"temperature_c": 23.8, "humidity_pct": 58.0, "co2_ppm": 1740, "gap_seconds": 30},
+            sample(24.2, 59.4, 910),
+            sample(24.1, 59.2, 1100),
+            sample(24.1, 59.0, 1280),
+            sample(24.0, 58.8, 1490),
+            sample(23.9, 58.5, 1700),
+            sample(23.8, 58.2, 1920),
         ],
     },
     {
@@ -99,12 +114,12 @@ PRESET_DEFINITIONS = [
         "target_anomaly": "sensor_spike",
         "description": "Mostly stable conditions with one sudden jump that looks like a spike fault.",
         "samples": [
-            {"temperature_c": 24.0, "humidity_pct": 60.0, "co2_ppm": 900, "gap_seconds": 30},
-            {"temperature_c": 24.1, "humidity_pct": 60.2, "co2_ppm": 905, "gap_seconds": 30},
-            {"temperature_c": 24.0, "humidity_pct": 60.1, "co2_ppm": 902, "gap_seconds": 30},
-            {"temperature_c": 24.2, "humidity_pct": 60.3, "co2_ppm": 908, "gap_seconds": 30},
-            {"temperature_c": 24.1, "humidity_pct": 60.2, "co2_ppm": 906, "gap_seconds": 30},
-            {"temperature_c": 37.6, "humidity_pct": 60.4, "co2_ppm": 910, "gap_seconds": 30},
+            sample(24.0, 60.0, 900),
+            sample(24.1, 60.2, 905),
+            sample(24.0, 60.1, 902),
+            sample(24.2, 60.3, 908),
+            sample(24.1, 60.2, 906),
+            sample(37.6, 60.4, 910),
         ],
     },
     {
@@ -114,12 +129,12 @@ PRESET_DEFINITIONS = [
         "target_anomaly": "sensor_drift",
         "description": "Gradual sensor bias building across the last few samples instead of a hard threshold breach.",
         "samples": [
-            {"temperature_c": 23.8, "humidity_pct": 59.0, "co2_ppm": 890, "gap_seconds": 30},
-            {"temperature_c": 24.6, "humidity_pct": 59.1, "co2_ppm": 892, "gap_seconds": 30},
-            {"temperature_c": 25.5, "humidity_pct": 59.2, "co2_ppm": 894, "gap_seconds": 30},
-            {"temperature_c": 26.5, "humidity_pct": 59.3, "co2_ppm": 896, "gap_seconds": 30},
-            {"temperature_c": 27.6, "humidity_pct": 59.4, "co2_ppm": 898, "gap_seconds": 30},
-            {"temperature_c": 28.8, "humidity_pct": 59.5, "co2_ppm": 900, "gap_seconds": 30},
+            sample(23.8, 59.0, 890),
+            sample(24.6, 59.1, 892),
+            sample(25.5, 59.2, 894),
+            sample(26.5, 59.3, 896),
+            sample(27.6, 59.4, 898),
+            sample(28.8, 59.5, 900),
         ],
     },
     {
@@ -129,12 +144,12 @@ PRESET_DEFINITIONS = [
         "target_anomaly": "sensor_stuck",
         "description": "One reading channel stays frozen while the other variables continue to move.",
         "samples": [
-            {"temperature_c": 24.0, "humidity_pct": 58.2, "co2_ppm": 905, "gap_seconds": 30},
-            {"temperature_c": 24.0, "humidity_pct": 58.8, "co2_ppm": 918, "gap_seconds": 30},
-            {"temperature_c": 24.0, "humidity_pct": 59.6, "co2_ppm": 929, "gap_seconds": 30},
-            {"temperature_c": 24.0, "humidity_pct": 60.4, "co2_ppm": 941, "gap_seconds": 30},
-            {"temperature_c": 24.0, "humidity_pct": 61.1, "co2_ppm": 952, "gap_seconds": 30},
-            {"temperature_c": 24.0, "humidity_pct": 61.9, "co2_ppm": 964, "gap_seconds": 30},
+            sample(24.0, 58.2, 905),
+            sample(24.0, 58.8, 918),
+            sample(24.0, 59.6, 929),
+            sample(24.0, 60.4, 941),
+            sample(24.0, 61.1, 952),
+            sample(24.0, 61.9, 964),
         ],
     },
     {
@@ -144,12 +159,12 @@ PRESET_DEFINITIONS = [
         "target_anomaly": "sensor_dropout",
         "description": "A delayed update gap that mimics a missed sample or transport outage.",
         "samples": [
-            {"temperature_c": 24.2, "humidity_pct": 59.4, "co2_ppm": 905, "gap_seconds": 30},
-            {"temperature_c": 24.1, "humidity_pct": 59.6, "co2_ppm": 910, "gap_seconds": 30},
-            {"temperature_c": 24.0, "humidity_pct": 59.7, "co2_ppm": 914, "gap_seconds": 30},
-            {"temperature_c": 24.1, "humidity_pct": 59.8, "co2_ppm": 918, "gap_seconds": 30},
-            {"temperature_c": 24.0, "humidity_pct": 60.0, "co2_ppm": 922, "gap_seconds": 30},
-            {"temperature_c": 24.1, "humidity_pct": 60.1, "co2_ppm": 926, "gap_seconds": 180},
+            sample(24.2, 59.4, 905),
+            sample(24.1, 59.6, 910),
+            sample(24.0, 59.7, 914),
+            sample(24.1, 59.8, 918),
+            sample(24.0, 60.0, 922),
+            sample(24.1, 60.1, 926, gap_seconds=DROPOUT_GAP_SECONDS),
         ],
     },
     {
@@ -159,12 +174,12 @@ PRESET_DEFINITIONS = [
         "target_anomaly": "cross_variable_inconsistency",
         "description": "Sensor pattern that does not match believable greenhouse relationships.",
         "samples": [
-            {"temperature_c": 24.0, "humidity_pct": 60.0, "co2_ppm": 900, "gap_seconds": 30},
-            {"temperature_c": 24.2, "humidity_pct": 60.2, "co2_ppm": 910, "gap_seconds": 30},
-            {"temperature_c": 24.4, "humidity_pct": 60.4, "co2_ppm": 920, "gap_seconds": 30},
-            {"temperature_c": 30.0, "humidity_pct": 88.0, "co2_ppm": 470, "gap_seconds": 30},
-            {"temperature_c": 31.5, "humidity_pct": 92.0, "co2_ppm": 420, "gap_seconds": 30},
-            {"temperature_c": 33.0, "humidity_pct": 95.0, "co2_ppm": 390, "gap_seconds": 30},
+            sample(24.0, 60.0, 900),
+            sample(24.2, 60.2, 910),
+            sample(24.4, 60.4, 920),
+            sample(30.0, 88.0, 470),
+            sample(31.5, 92.0, 420),
+            sample(33.0, 95.0, 390),
         ],
     },
     {
@@ -174,12 +189,12 @@ PRESET_DEFINITIONS = [
         "target_anomaly": "out_of_range",
         "description": "Physically implausible sensor value for demonstrating a hard fault condition.",
         "samples": [
-            {"temperature_c": 24.0, "humidity_pct": 60.0, "co2_ppm": 900, "gap_seconds": 30},
-            {"temperature_c": 24.1, "humidity_pct": 60.2, "co2_ppm": 905, "gap_seconds": 30},
-            {"temperature_c": 24.0, "humidity_pct": 60.1, "co2_ppm": 902, "gap_seconds": 30},
-            {"temperature_c": 24.2, "humidity_pct": 60.3, "co2_ppm": 908, "gap_seconds": 30},
-            {"temperature_c": 24.1, "humidity_pct": 60.2, "co2_ppm": 906, "gap_seconds": 30},
-            {"temperature_c": 24.0, "humidity_pct": 104.0, "co2_ppm": 910, "gap_seconds": 30},
+            sample(24.0, 60.0, 900),
+            sample(24.1, 60.2, 905),
+            sample(24.0, 60.1, 902),
+            sample(24.2, 60.3, 908),
+            sample(24.1, 60.2, 906),
+            sample(-12.0, 60.1, 910),
         ],
     },
 ]

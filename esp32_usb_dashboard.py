@@ -32,17 +32,30 @@ I2C_BUS = int(getattr(config, "I2C_BUS", 0))
 I2C_SCL_PIN = int(getattr(config, "I2C_SCL_PIN", 8))
 I2C_SDA_PIN = int(getattr(config, "I2C_SDA_PIN", 9))
 I2C_FREQ = int(getattr(config, "I2C_FREQ", 100000))
-SAMPLE_INTERVAL_S = int(getattr(config, "SAMPLE_INTERVAL_S", 30))
+SAMPLE_INTERVAL_S = int(getattr(config, "SAMPLE_INTERVAL_S", 40))
 INITIAL_WARMUP_S = int(getattr(config, "INITIAL_WARMUP_S", 35))
 RECOVERY_WARMUP_S = int(getattr(config, "RECOVERY_WARMUP_S", 35))
 SENSOR_RESTART_DELAY_S = float(getattr(config, "SENSOR_RESTART_DELAY_S", 1))
 MAX_NOT_READY_RETRIES = int(getattr(config, "MAX_NOT_READY_RETRIES", 3))
 MEASUREMENT_MODE = str(getattr(config, "MEASUREMENT_MODE", "low_power")).strip().lower()
 SENSOR_FAILURE_BACKOFF_S = int(getattr(config, "SENSOR_FAILURE_BACKOFF_S", 60))
+MAX_LOW_POWER_WINDOW_MISSES = int(
+    getattr(config, "MAX_LOW_POWER_WINDOW_MISSES", 3)
+)
+READINESS_POLL_INTERVAL_S = float(getattr(config, "READINESS_POLL_INTERVAL_S", 1.0))
+PERIODIC_READY_LEAD_S = float(getattr(config, "PERIODIC_READY_LEAD_S", 1.0))
+PERIODIC_READY_GRACE_S = float(
+    getattr(config, "PERIODIC_READY_GRACE_S", max(20, MAX_NOT_READY_RETRIES * 5))
+)
 MODE_READY_TIMEOUTS = {
-    "low_power": max(35, INITIAL_WARMUP_S),
+    "low_power": max(45, INITIAL_WARMUP_S),
     "standard": 12,
     "single_shot": 12,
+}
+MODE_SAMPLE_PERIODS = {
+    "low_power": 30.0,
+    "standard": 5.0,
+    "single_shot": 5.0,
 }
 
 
@@ -196,8 +209,10 @@ def normalize_measurement_mode(mode):
 
 def measurement_mode_plan(preferred_mode):
     preferred = normalize_measurement_mode(preferred_mode)
+    if preferred == "low_power":
+        return ["low_power"]
     plan = []
-    for mode in (preferred, "standard", "single_shot"):
+    for mode in (preferred, "single_shot", "low_power"):
         if mode not in plan:
             plan.append(mode)
     return plan
@@ -221,13 +236,42 @@ def wait_for_ready(sensor, timeout_s):
         if status:
             return True, status
         last_status = status
-        time.sleep(1)
+        time.sleep(READINESS_POLL_INTERVAL_S)
     return False, last_status
+
+
+def expected_sample_interval_s(mode):
+    sensor_period_s = MODE_SAMPLE_PERIODS.get(mode, float(SAMPLE_INTERVAL_S))
+    return max(sensor_period_s, float(SAMPLE_INTERVAL_S))
+
+
+def wait_for_periodic_reading(sensor, mode, last_sample_ms):
+    interval_s = expected_sample_interval_s(mode)
+    if last_sample_ms is not None:
+        elapsed_s = time.ticks_diff(time.ticks_ms(), last_sample_ms) / 1000.0
+        remaining_s = interval_s - PERIODIC_READY_LEAD_S - elapsed_s
+        if remaining_s > 0:
+            time.sleep(remaining_s)
+
+    deadline = time.time() + max(1.0, PERIODIC_READY_GRACE_S)
+    last_status = None
+    while time.time() < deadline:
+        # In faster modes the ready-status bit can be flaky on some boards,
+        # so try a direct measurement read before treating the sample as missing.
+        reading = sensor.read_latest()
+        if reading:
+            return reading, last_status
+
+        last_status = sensor.data_ready_status()
+        time.sleep(READINESS_POLL_INTERVAL_S)
+
+    return None, last_status
 
 
 def initialize_sensor_mode(sensor, i2c, preferred_mode):
     log_i2c_scan(i2c)
-    for mode in measurement_mode_plan(preferred_mode):
+    attempted_modes = measurement_mode_plan(preferred_mode)
+    for mode in attempted_modes:
         try:
             sensor.wake_up()
         except Exception:
@@ -262,7 +306,9 @@ def initialize_sensor_mode(sensor, i2c, preferred_mode):
         )
 
     log_message(
-        "SCD41 seen on I2C but never became ready in low power, standard, or single-shot mode. Check sensor power, wiring quality, or hardware.",
+        "SCD41 seen on I2C but never became ready in attempted mode(s): {}. Check sensor power, wiring quality, or hardware.".format(
+            ", ".join(mode.replace("_", " ") for mode in attempted_modes)
+        ),
         level="error",
     )
     return None
@@ -300,8 +346,8 @@ def main():
     board_ai = BoardAiRuntime()
     log_message("On-device AI models loaded.")
     active_mode = initialize_sensor_mode(sensor, i2c, MEASUREMENT_MODE)
-    retry_count = 0
     last_sample_ms = None
+    consecutive_window_misses = 0
 
     while True:
         try:
@@ -314,14 +360,15 @@ def main():
                 )
                 time.sleep(SENSOR_FAILURE_BACKOFF_S)
                 active_mode = initialize_sensor_mode(sensor, i2c, MEASUREMENT_MODE)
-                retry_count = 0
                 last_sample_ms = None
+                consecutive_window_misses = 0
                 continue
 
             if active_mode == "single_shot":
                 start_measurement_mode(sensor, active_mode)
-                ready, status = wait_for_ready(sensor, MODE_READY_TIMEOUTS["single_shot"])
-                if not ready:
+                time.sleep(max(1.0, expected_sample_interval_s(active_mode) - PERIODIC_READY_LEAD_S))
+                reading, status = wait_for_periodic_reading(sensor, active_mode, None)
+                if not reading:
                     log_message(
                         "Single-shot measurement did not become ready. Last status: {}.".format(
                             "crc/error" if status is None else status
@@ -329,37 +376,56 @@ def main():
                         level="warning",
                     )
                     active_mode = initialize_sensor_mode(sensor, i2c, MEASUREMENT_MODE)
-                    retry_count = 0
                     last_sample_ms = None
+                    consecutive_window_misses = 0
                     continue
-
-            reading = sensor.read()
+            else:
+                reading, status = wait_for_periodic_reading(sensor, active_mode, last_sample_ms)
 
             if not reading:
-                retry_count += 1
-                log_message(
-                    "Sensor data not ready. Retrying soon... ({}/{})".format(
-                        retry_count, MAX_NOT_READY_RETRIES
-                    ),
-                    level="warning",
-                )
-                if retry_count >= MAX_NOT_READY_RETRIES:
-                    status = sensor.data_ready_status()
+                consecutive_window_misses += 1
+                if (
+                    active_mode == "low_power"
+                    and consecutive_window_misses < MAX_LOW_POWER_WINDOW_MISSES
+                ):
                     log_message(
-                        "Too many consecutive empty SCD41 reads. Reinitialising the measurement mode. Last ready status: {}.".format(
-                            "crc/error" if status is None else status
+                        (
+                            "Low-power sample window was missed ({}/{}). "
+                            "Keeping the current measurement mode and waiting for the next sample. "
+                            "Last ready status: {}."
+                        ).format(
+                            consecutive_window_misses,
+                            MAX_LOW_POWER_WINDOW_MISSES,
+                            "crc/error" if status is None else status,
                         ),
                         level="warning",
                     )
-                    active_mode = initialize_sensor_mode(sensor, i2c, MEASUREMENT_MODE)
-                    retry_count = 0
-                    last_sample_ms = None
-                else:
-                    time.sleep(5)
+                    continue
+
+                recovery_preference = MEASUREMENT_MODE
+                if active_mode == "standard":
+                    recovery_preference = "single_shot"
+                    log_message(
+                        "Standard mode missed its sample window. Falling back to single-shot recovery.",
+                        level="warning",
+                    )
+                log_message(
+                    (
+                        "SCD41 did not produce a fresh {} sample within the expected window. "
+                        "Last ready status: {}. Reinitialising the measurement mode."
+                    ).format(
+                        active_mode.replace("_", " "),
+                        "crc/error" if status is None else status,
+                    ),
+                    level="warning",
+                )
+                active_mode = initialize_sensor_mode(sensor, i2c, recovery_preference)
+                last_sample_ms = None
+                consecutive_window_misses = 0
                 continue
 
             co2, temperature, humidity = reading
-            retry_count = 0
+            consecutive_window_misses = 0
             now_ms = time.ticks_ms()
             if last_sample_ms is None:
                 gap_seconds = SAMPLE_INTERVAL_S
@@ -374,7 +440,6 @@ def main():
             )
             log_message(format_sample_log(co2, temperature, humidity, board_result))
             send_telemetry(co2, temperature, humidity, board_result, gap_seconds)
-            time.sleep(SAMPLE_INTERVAL_S)
 
         except KeyboardInterrupt:
             log_message("Stopping USB telemetry loop.")

@@ -8,7 +8,9 @@ from pathlib import Path
 from greenhouse_anomaly_detection import (
     ANOMALY_LABELS,
     ANOMALY_METADATA,
+    DROPOUT_THRESHOLD_S,
     FEATURE_COLUMNS,
+    NOMINAL_SAMPLE_INTERVAL_S,
     PLAUSIBLE_BOUNDS,
     WINDOW_SIZE,
     extract_anomaly_features,
@@ -41,7 +43,11 @@ def bounded_gauss(
 
 
 def nominal_gap(rng: random.Random) -> float:
-    return clamp(rng.gauss(30.0, 1.8), 24.0, 36.0)
+    return clamp(
+        rng.gauss(NOMINAL_SAMPLE_INTERVAL_S, max(0.35, NOMINAL_SAMPLE_INTERVAL_S * 0.03)),
+        NOMINAL_SAMPLE_INTERVAL_S * 0.8,
+        NOMINAL_SAMPLE_INTERVAL_S * 1.2,
+    )
 
 
 def stable_sequence(rng: random.Random) -> list[dict]:
@@ -51,9 +57,9 @@ def stable_sequence(rng: random.Random) -> list[dict]:
     samples = []
 
     for _ in range(WINDOW_SIZE):
-        temperature_c = clamp(temperature_c + rng.gauss(0.0, 0.35), 18.0, 31.0)
-        humidity_pct = clamp(humidity_pct + rng.gauss(0.0, 1.2), 35.0, 90.0)
-        co2_ppm = clamp(co2_ppm + rng.gauss(0.0, 35.0), 550.0, 1600.0)
+        temperature_c = clamp(temperature_c + rng.gauss(0.0, 0.12), 18.0, 31.0)
+        humidity_pct = clamp(humidity_pct + rng.gauss(0.0, 0.45), 35.0, 90.0)
+        co2_ppm = clamp(co2_ppm + rng.gauss(0.0, 14.0), 550.0, 1600.0)
         samples.append(
             {
                 "temperature_c": round(temperature_c, 3),
@@ -161,7 +167,10 @@ def build_sensor_stuck(rng: random.Random) -> list[dict]:
 
 def build_sensor_dropout(rng: random.Random) -> list[dict]:
     samples = stable_sequence(rng)
-    samples[-1]["gap_seconds"] = round(rng.uniform(120.0, 240.0), 3)
+    samples[-1]["gap_seconds"] = round(
+        rng.uniform(DROPOUT_THRESHOLD_S * 1.1, DROPOUT_THRESHOLD_S * 2.5),
+        3,
+    )
     for field in ("temperature_c", "humidity_pct", "co2_ppm"):
         samples[-1][field] = samples[-2][field]
     return samples

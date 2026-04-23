@@ -58,6 +58,8 @@ LIVE_STATE = {
     "received_at": None,
     "board_result": None,
 }
+LIVE_STREAM_CONDITION = threading.Condition()
+LIVE_UPDATE_SEQUENCE = 0
 PRESENTATION_STATE_LOCK = threading.Lock()
 PRESENTATION_STATE = {
     "offsets": {
@@ -704,6 +706,30 @@ def default_board_device_id() -> str:
     return live_device_id or "esp32-s3-greenhouse-1"
 
 
+def publish_live_update() -> int:
+    global LIVE_UPDATE_SEQUENCE
+    with LIVE_STREAM_CONDITION:
+        LIVE_UPDATE_SEQUENCE += 1
+        LIVE_STREAM_CONDITION.notify_all()
+        return LIVE_UPDATE_SEQUENCE
+
+
+def current_live_update_sequence() -> int:
+    with LIVE_STREAM_CONDITION:
+        return LIVE_UPDATE_SEQUENCE
+
+
+def wait_for_live_update(last_sequence: int, timeout: float = 20.0) -> int | None:
+    with LIVE_STREAM_CONDITION:
+        updated = LIVE_STREAM_CONDITION.wait_for(
+            lambda: LIVE_UPDATE_SEQUENCE > last_sequence,
+            timeout=timeout,
+        )
+        if not updated:
+            return None
+        return LIVE_UPDATE_SEQUENCE
+
+
 def detect_serial_port() -> str | None:
     if list_ports is None:
         return None
@@ -939,6 +965,8 @@ def default_live_payload() -> dict:
         "device_id": None,
         "received_at": None,
         "age_seconds": None,
+        "sample_sequence": None,
+        "history_window": [],
         "raw_sensors": copy.deepcopy(DEFAULT_LIVE_SENSORS),
         "presentation": {
             "offsets": {"temperature_c": 0.0, "humidity_pct": 0.0, "co2_ppm": 0},
@@ -1055,6 +1083,7 @@ def current_live_payload() -> dict:
         state = copy.deepcopy(LIVE_STATE)
     with PRESENTATION_STATE_LOCK:
         presentation_state = copy.deepcopy(PRESENTATION_STATE)
+    sample_sequence = current_live_update_sequence()
 
     if state["received_at"] is None:
         fault_state = current_board_fault_state()
@@ -1075,6 +1104,8 @@ def current_live_payload() -> dict:
                 "connected": fault_state["connected"],
                 "received_at": fault_state["received_at"],
                 "age_seconds": fault_state["age_seconds"],
+                "sample_sequence": None,
+                "history_window": [],
                 "anomaly": sensor_fault_anomaly(fault_state["message"]),
             }
         )
@@ -1113,6 +1144,8 @@ def current_live_payload() -> dict:
                 time.localtime(state["received_at"]),
             ),
             "age_seconds": round(age_seconds, 1),
+            "sample_sequence": sample_sequence or None,
+            "history_window": current_mode_history("live")[-6:],
             "raw_sensors": raw_sensors,
             "presentation": (
                 {
@@ -1188,6 +1221,7 @@ def store_live_telemetry(payload: dict) -> dict:
         )
 
     append_mode_history("live", raw_sensors, timestamp=LIVE_STATE["received_at"])
+    publish_live_update()
     response = current_live_payload()
     response["posted_payload"] = raw_sensors
     return response
@@ -1300,6 +1334,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self._send_json(current_live_payload())
             return
 
+        if route == "/api/live/stream":
+            self._send_live_stream()
+            return
+
         if route == "/api/board/logs":
             self._send_json(current_board_log_payload())
             return
@@ -1388,6 +1426,59 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
+
+    def _write_sse(self, payload: dict, *, event: str = "live", event_id: int | None = None) -> None:
+        message = []
+        if event:
+            message.append(f"event: {event}")
+        if event_id is not None:
+            message.append(f"id: {event_id}")
+        encoded_payload = json.dumps(payload, separators=(",", ":"))
+        for line in encoded_payload.splitlines() or ["{}"]:
+            message.append(f"data: {line}")
+        message.append("")
+        body = ("\n".join(message) + "\n").encode("utf-8")
+        self.wfile.write(body)
+        try:
+            self.wfile.flush()
+        except Exception:
+            pass
+
+    def _write_sse_comment(self, comment: str) -> None:
+        body = f": {comment}\n\n".encode("utf-8")
+        self.wfile.write(body)
+        try:
+            self.wfile.flush()
+        except Exception:
+            pass
+
+    def _send_live_stream(self) -> None:
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Connection", "keep-alive")
+        self.end_headers()
+
+        try:
+            initial_payload = current_live_payload()
+            initial_sequence = initial_payload.get("sample_sequence") or 0
+            self._write_sse(initial_payload, event="live", event_id=int(initial_sequence))
+            last_sequence = int(initial_sequence)
+
+            while True:
+                next_sequence = wait_for_live_update(last_sequence, timeout=20.0)
+                if next_sequence is None:
+                    self._write_sse_comment("keep-alive")
+                    continue
+
+                self._write_sse(
+                    current_live_payload(),
+                    event="live",
+                    event_id=int(next_sequence),
+                )
+                last_sequence = int(next_sequence)
+        except (BrokenPipeError, ConnectionResetError):
+            return
 
     def _send_file(self, path: Path) -> None:
         body = path.read_bytes()

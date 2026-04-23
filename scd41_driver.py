@@ -72,8 +72,11 @@ class SCD41:
         return status is not None and status != 0
 
     def read(self):
+        return self.read_measurement(require_ready=True)
+
+    def read_measurement(self, require_ready=True):
         try:
-            if not self.is_data_ready():
+            if require_ready and not self.is_data_ready():
                 return None
 
             self._send_command(self.CMD_READ_MEASUREMENT)
@@ -96,3 +99,6 @@ class SCD41:
             return co2, temperature, humidity
         except Exception:
             return None
+
+    def read_latest(self):
+        return self.read_measurement(require_ready=False)

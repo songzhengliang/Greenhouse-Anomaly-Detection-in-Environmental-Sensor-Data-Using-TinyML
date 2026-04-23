@@ -11,7 +11,9 @@ from project_paths import ANOMALY_MODEL_FILE
 
 MODEL_FILE = ANOMALY_MODEL_FILE
 WINDOW_SIZE = 6
-NOMINAL_SAMPLE_INTERVAL_S = 30.0
+NOMINAL_SAMPLE_INTERVAL_S = 40.0
+DROPOUT_THRESHOLD_RATIO = 4.0
+DROPOUT_THRESHOLD_S = NOMINAL_SAMPLE_INTERVAL_S * DROPOUT_THRESHOLD_RATIO
 SENSOR_FIELDS = ("temperature_c", "humidity_pct", "co2_ppm")
 PLAUSIBLE_BOUNDS = {
     "temperature_c": (-5.0, 55.0),
@@ -348,7 +350,7 @@ def _fallback_anomaly_from_features(
 
     if features["current_out_of_range"] > 0:
         label = "out_of_range"
-    elif features["gap_seconds"] >= 90.0:
+    elif features["gap_seconds"] >= DROPOUT_THRESHOLD_S:
         label = "sensor_dropout"
     elif (
         features["unchanged_run_temperature_c"] >= 4
@@ -401,7 +403,7 @@ def _warmup_anomaly_from_features(features: dict[str, float], sample_count: int)
     label = "normal"
     if features["current_out_of_range"] > 0:
         label = "out_of_range"
-    elif features["gap_seconds"] >= 90.0:
+    elif features["gap_seconds"] >= DROPOUT_THRESHOLD_S:
         label = "sensor_dropout"
     elif features["temperature_c"] > 30.0:
         label = "temperature_high"

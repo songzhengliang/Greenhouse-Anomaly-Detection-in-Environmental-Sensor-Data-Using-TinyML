@@ -10,6 +10,7 @@ The current repo supports two ways to connect the ESP32-S3 to the laptop:
 2. Wi-Fi mode
 
 USB serial mode is the easiest way to get the system working the first time.
+The current default setup uses `low_power` SCD41 periodic mode with a `40` second board sample interval for presentation stability.
 
 ## Tested Hardware
 
@@ -263,8 +264,8 @@ The board will:
 2. launch `esp32_usb_dashboard.py`
 3. initialize I2C
 4. start the SCD41
-5. wait for the 35-second SCD41 warm-up period
-6. begin sending live readings every 30 seconds
+5. wait for the SCD41 warm-up period
+6. begin sending live readings about every 40 seconds in the default low-power setup
 
 ## Step 6: Watch the Dashboard
 
@@ -300,7 +301,7 @@ This is the shortest working path:
 4. run `python3 start_everything.py`
 5. let the launcher sync the board files if needed
 6. if the board was not reset automatically, press `EN` or `RST`
-7. wait 35 seconds
+7. wait for the SCD41 warm-up period
 8. open `http://127.0.0.1:8000`
 9. click `Watch ESP32-S3 Feed`
 
@@ -358,7 +359,7 @@ Check these in order:
 3. make sure `dashboard_server.py` is running
 4. make sure the correct serial port is being used
 5. press `EN` or `RST` once
-6. wait at least 35 seconds for the SCD41 warm-up
+6. wait for the SCD41 warm-up period
 
 ### The board enters download mode
 

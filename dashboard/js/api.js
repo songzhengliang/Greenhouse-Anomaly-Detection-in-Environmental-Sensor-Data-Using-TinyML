@@ -37,6 +37,25 @@ export function loadLiveScenario() {
   return fetchJson("/api/live");
 }
 
+export function connectLiveStream({ onMessage, onError } = {}) {
+  const eventSource = new EventSource("/api/live/stream");
+
+  eventSource.addEventListener("live", (event) => {
+    try {
+      const payload = JSON.parse(event.data);
+      onMessage?.(payload);
+    } catch (error) {
+      onError?.(error);
+    }
+  });
+
+  eventSource.onerror = (error) => {
+    onError?.(error);
+  };
+
+  return eventSource;
+}
+
 export function loadBoardLogs() {
   return fetchJson("/api/board/logs");
 }

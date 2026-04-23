@@ -1,5 +1,6 @@
 import {
   applyAnomalyPreset,
+  connectLiveStream,
   loadBoardLogs,
   loadAnomalyPresets,
   evaluateManualScenario,
@@ -26,17 +27,33 @@ import {
   updateModeButtons,
   getDom,
 } from "./ui.js";
-import { addHistoryPoint, appState, setBoardConsole, setCurrentData } from "./store.js";
+import {
+  addHistoryPoint,
+  appState,
+  consumeLiveSample,
+  setBoardConsole,
+  setCurrentData,
+} from "./store.js";
 
 let liveTimer = null;
 let boardLogTimer = null;
+let liveStream = null;
 let currentPage = "live";
 
-function applyData(data) {
+function applyData(data, { syncHistory = true } = {}) {
   setCurrentData(data);
-  addHistoryPoint(data);
+  if (syncHistory) {
+    addHistoryPoint(data);
+  }
   renderDashboard(data);
-  renderCharts();
+  if (syncHistory) {
+    renderCharts();
+  }
+}
+
+function applyLiveData(data, { forceHistory = false } = {}) {
+  const syncHistory = consumeLiveSample(data, { force: forceHistory });
+  applyData(data, { syncHistory });
 }
 
 async function refreshBoardConsole() {
@@ -45,12 +62,40 @@ async function refreshBoardConsole() {
   renderBoardConsole();
 }
 
+function stopLiveStream() {
+  if (liveStream) {
+    liveStream.close();
+    liveStream = null;
+  }
+}
+
+function ensureLiveStream() {
+  if (liveStream || typeof EventSource === "undefined") {
+    return;
+  }
+
+  liveStream = connectLiveStream({
+    onMessage(data) {
+      if (currentPage !== "live") {
+        return;
+      }
+      applyLiveData(data);
+    },
+    onError(error) {
+      if (error instanceof SyntaxError) {
+        showError("Live stream returned unreadable data.");
+      }
+    },
+  });
+}
+
 function stopLiveFeed() {
   if (liveTimer) {
     clearInterval(liveTimer);
     liveTimer = null;
-    updateModeButtons({ liveActive: false });
   }
+  stopLiveStream();
+  updateModeButtons({ liveActive: false });
 }
 
 async function handleManualEvaluate() {
@@ -61,19 +106,21 @@ async function handleManualEvaluate() {
 
 async function handleLiveLoad() {
   const data = await loadLiveScenario();
-  applyData(data);
+  applyLiveData(data, { forceHistory: true });
 }
 
 async function startLiveFeed() {
   await handleLiveLoad();
+  ensureLiveStream();
   if (!liveTimer) {
     liveTimer = window.setInterval(async () => {
       try {
-        await handleLiveLoad();
+        const data = await loadLiveScenario();
+        applyLiveData(data);
       } catch (error) {
         showError(error.message);
       }
-    }, 3000);
+    }, 5000);
   }
   updateModeButtons({ liveActive: true });
 }

@@ -47,9 +47,10 @@ I2C_BUS = int(getattr(config, "I2C_BUS", 0))
 I2C_SCL_PIN = int(getattr(config, "I2C_SCL_PIN", 8))
 I2C_SDA_PIN = int(getattr(config, "I2C_SDA_PIN", 9))
 I2C_FREQ = int(getattr(config, "I2C_FREQ", 100000))
-SAMPLE_INTERVAL_S = int(getattr(config, "SAMPLE_INTERVAL_S", 30))
+SAMPLE_INTERVAL_S = int(getattr(config, "SAMPLE_INTERVAL_S", 40))
 WIFI_TIMEOUT_S = int(getattr(config, "WIFI_TIMEOUT_S", 20))
 HTTP_TIMEOUT_S = int(getattr(config, "HTTP_TIMEOUT_S", 10))
+MEASUREMENT_MODE = str(getattr(config, "MEASUREMENT_MODE", "low_power")).strip().lower()
 
 
 def config_is_placeholder(value):
@@ -68,6 +69,22 @@ def validate_config():
         raise RuntimeError("Set WIFI_PASSWORD in board_config.py before running.")
     if config_is_placeholder(SERVER_HOST):
         raise RuntimeError("Set SERVER_HOST in board_config.py before running.")
+
+
+def normalized_measurement_mode():
+    if MEASUREMENT_MODE in ("low_power", "low-power", "lowpower"):
+        return "low_power"
+    return "standard"
+
+
+def measurement_startup_delay_s():
+    if normalized_measurement_mode() == "low_power":
+        return 35
+    return max(5, SAMPLE_INTERVAL_S)
+
+
+def not_ready_retry_delay_s():
+    return 1 if SAMPLE_INTERVAL_S <= 5 else min(5, max(1, SAMPLE_INTERVAL_S // 3))
 
 
 def connect_wifi(ssid, password, timeout_s=WIFI_TIMEOUT_S):
@@ -272,9 +289,13 @@ def main():
     except Exception:
         pass
 
-    sensor.start()
-    log_message("Waiting for the SCD41 warm-up period (35 seconds)...")
-    time.sleep(35)
+    mode = normalized_measurement_mode()
+    sensor.start(low_power=(mode == "low_power"))
+    startup_delay_s = measurement_startup_delay_s()
+    log_message(
+        "Waiting for the SCD41 warm-up period ({} seconds)...".format(startup_delay_s)
+    )
+    time.sleep(startup_delay_s)
 
     while True:
         try:
@@ -283,7 +304,7 @@ def main():
 
             if not reading:
                 log_message("Sensor data not ready. Retrying soon...", level="warning")
-                time.sleep(5)
+                time.sleep(not_ready_retry_delay_s())
                 continue
 
             co2, temperature, humidity = reading
