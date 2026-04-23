@@ -1305,6 +1305,30 @@ def send_serial_console_input(payload: dict) -> dict:
     }
 
 
+def terminate_dashboard_service(server: ThreadingHTTPServer, *, delay_seconds: float = 0.2) -> dict:
+    if server is None:
+        raise ValueError("dashboard server is not available")
+
+    store_board_log(
+        {
+            "device_id": "dashboard-host",
+            "level": "warning",
+            "message": "Dashboard terminate request received. Shutting down the local service.",
+        }
+    )
+
+    def shutdown_server() -> None:
+        if delay_seconds > 0:
+            time.sleep(delay_seconds)
+        server.shutdown()
+
+    threading.Thread(target=shutdown_server, daemon=True).start()
+    return {
+        "ok": True,
+        "message": "Dashboard service is shutting down.",
+    }
+
+
 class DashboardHandler(BaseHTTPRequestHandler):
     demo_rows = load_demo_rows()
     demo_index = 0
@@ -1381,6 +1405,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
             if route == "/api/serial/write":
                 self._send_json(send_serial_console_input(payload))
+                return
+
+            if route == "/api/server/terminate":
+                self._send_json(terminate_dashboard_service(self.server))
                 return
 
             if route == "/api/telemetry":
@@ -1508,7 +1536,13 @@ def main() -> None:
         SERIAL_BRIDGE = SerialBridge(args.serial_port, args.serial_baud)
         SERIAL_BRIDGE.start()
 
-    server = ThreadingHTTPServer((args.host, args.port), DashboardHandler)
+    try:
+        server = ThreadingHTTPServer((args.host, args.port), DashboardHandler)
+    except OSError as exc:
+        raise SystemExit(
+            f"Could not start the dashboard server on {args.host}:{args.port}: {exc}. "
+            "Choose a different --port or stop the existing process first."
+        ) from exc
     display_host = "127.0.0.1" if args.host == "0.0.0.0" else args.host
     print(f"Dashboard available at http://{display_host}:{args.port}")
     if args.host == "0.0.0.0":

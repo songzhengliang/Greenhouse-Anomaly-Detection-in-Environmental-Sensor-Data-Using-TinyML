@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 import unittest
 
 import dashboard_server
@@ -49,6 +50,14 @@ class FakeSerialBridge:
 
     def snapshot(self) -> dict:
         return {"enabled": True, "connected": True, "port": "/dev/test", "error": None}
+
+
+class FakeShutdownServer:
+    def __init__(self) -> None:
+        self.shutdown_called = threading.Event()
+
+    def shutdown(self) -> None:
+        self.shutdown_called.set()
 
 
 class DashboardServerStateTests(unittest.TestCase):
@@ -188,6 +197,18 @@ class DashboardServerStateTests(unittest.TestCase):
         payload = dashboard_server.send_serial_console_input({"control": "soft_reset"})
         self.assertTrue(payload["ok"])
         self.assertEqual(fake_bridge.writes, [b"\x04"])
+
+    def test_terminate_dashboard_service_requests_shutdown(self) -> None:
+        fake_server = FakeShutdownServer()
+        payload = dashboard_server.terminate_dashboard_service(fake_server, delay_seconds=0.0)
+        self.assertTrue(payload["ok"])
+        self.assertTrue(fake_server.shutdown_called.wait(1.0))
+        self.assertTrue(
+            any(
+                "terminate request received" in entry["message"].lower()
+                for entry in dashboard_server.current_board_logs()
+            )
+        )
 
 
 if __name__ == "__main__":

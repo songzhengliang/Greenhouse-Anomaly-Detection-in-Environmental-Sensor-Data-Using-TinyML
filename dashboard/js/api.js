@@ -75,3 +75,11 @@ export function sendBoardConsoleInput(payload) {
     body: JSON.stringify(payload),
   });
 }
+
+export function terminateDashboardService() {
+  return fetchJson("/api/server/terminate", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({}),
+  });
+}

@@ -6,6 +6,7 @@ import {
   evaluateManualScenario,
   loadLiveScenario,
   sendBoardConsoleInput,
+  terminateDashboardService,
   pushPresentationState,
 } from "./api.js";
 import { initializeCharts, renderCharts } from "./charts.js";
@@ -60,6 +61,13 @@ async function refreshBoardConsole() {
   const boardConsole = await loadBoardLogs();
   setBoardConsole(boardConsole);
   renderBoardConsole();
+}
+
+function stopBoardConsoleRefresh() {
+  if (boardLogTimer) {
+    clearInterval(boardLogTimer);
+    boardLogTimer = null;
+  }
 }
 
 function stopLiveStream() {
@@ -158,6 +166,28 @@ async function handleConsoleSend(text) {
 async function handleConsoleControl(control) {
   await sendBoardConsoleInput({ control });
   await refreshBoardConsole();
+}
+
+async function handleTerminateService() {
+  const dom = getDom();
+  const originalLabel = dom.consoleTerminateButton.textContent;
+
+  dom.consoleTerminateButton.disabled = true;
+  dom.consoleTerminateButton.textContent = "Terminating...";
+  dom.boardConsoleNote.textContent = "Dashboard service is shutting down...";
+
+  try {
+    await terminateDashboardService();
+    stopLiveFeed();
+    stopBoardConsoleRefresh();
+    dom.boardConsoleStatus.className = "badge rounded-pill bg-danger-subtle text-danger-emphasis";
+    dom.boardConsoleStatus.textContent = "Stopping";
+    dom.boardConsoleNote.textContent = "Dashboard service is shutting down. This page will stop updating.";
+  } catch (error) {
+    dom.consoleTerminateButton.disabled = false;
+    dom.consoleTerminateButton.textContent = originalLabel;
+    throw error;
+  }
 }
 
 function currentPresentationPayload(override = appState.currentPresentation.override) {
@@ -359,6 +389,14 @@ async function bootstrap() {
   dom.consoleResetButton.addEventListener("click", async () => {
     try {
       await handleConsoleControl("soft_reset");
+    } catch (error) {
+      showError(error.message);
+    }
+  });
+
+  dom.consoleTerminateButton.addEventListener("click", async () => {
+    try {
+      await handleTerminateService();
     } catch (error) {
       showError(error.message);
     }

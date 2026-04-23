@@ -365,6 +365,7 @@ export function initializeUi() {
   dom.consoleSendButton = document.getElementById("console-send-button");
   dom.consoleInterruptButton = document.getElementById("console-interrupt-button");
   dom.consoleResetButton = document.getElementById("console-reset-button");
+  dom.consoleTerminateButton = document.getElementById("console-terminate-button");
   dom.presetSelect = document.getElementById("preset-select");
   dom.applyPresetButton = document.getElementById("apply-preset-button");
   dom.presetCategory = document.getElementById("preset-category");
