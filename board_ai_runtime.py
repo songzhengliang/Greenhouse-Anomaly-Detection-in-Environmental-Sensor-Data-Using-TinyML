@@ -67,6 +67,14 @@ ACTION_SPECS = {
         "recommended_action": "Misting",
     },
 }
+ENVIRONMENTAL_ANOMALY_LABELS = (
+    "normal",
+    "temperature_high",
+    "temperature_low",
+    "humidity_high",
+    "humidity_low",
+    "co2_high",
+)
 ANOMALY_METADATA = {
     "normal": {
         "display_label": "No anomaly",
@@ -148,6 +156,56 @@ def _promote_state(current, incoming):
     if STATE_RANK.get(incoming, 0) > STATE_RANK.get(current, 0):
         return incoming
     return current
+
+
+def _anomaly_allows_virtual_actions(label):
+    normalized = str(label or "normal").strip() or "normal"
+    return normalized in ENVIRONMENTAL_ANOMALY_LABELS
+
+
+def _non_environmental_action_lock_reason(anomaly):
+    label = str((anomaly or {}).get("label") or "normal").strip() or "normal"
+    metadata = ANOMALY_METADATA.get(label, ANOMALY_METADATA["normal"])
+    display_label = str((anomaly or {}).get("display_label") or metadata["display_label"]).strip()
+    return (
+        "Virtual machines are held idle because %s is not an environmental anomaly."
+        % display_label.lower()
+    )
+
+
+def _lock_virtual_actions_for_anomaly(action_result, anomaly):
+    label = str((anomaly or {}).get("label") or "normal").strip() or "normal"
+    if _anomaly_allows_virtual_actions(label):
+        action_result["action_lock"] = {
+            "active": False,
+            "anomaly_label": label,
+            "reason": None,
+        }
+        return action_result
+
+    reason = _non_environmental_action_lock_reason(anomaly)
+    locked_actions = []
+    for action in action_result.get("actions", []):
+        locked_action = dict(action)
+        locked_action["status"] = "idle"
+        locked_action["active"] = False
+        locked_action["reason"] = reason
+        locked_action["source"] = "Safety lock"
+        locked_action["suppressed_by_anomaly"] = True
+        locked_actions.append(locked_action)
+
+    action_result["actions"] = locked_actions
+    action_result["triggered_conditions"] = []
+    action_result["overall_state"] = "stable"
+    action_result["summary"] = (
+        "Virtual machines are held idle because the current anomaly is not environmental."
+    )
+    action_result["action_lock"] = {
+        "active": True,
+        "anomaly_label": label,
+        "reason": reason,
+    }
+    return action_result
 
 
 def _max_index(values):
@@ -571,6 +629,7 @@ class BoardAiRuntime:
 
         action_result = self._predict_actions(sensors)
         anomaly = self._predict_anomaly(sensors, gap_seconds)
+        action_result = _lock_virtual_actions_for_anomaly(action_result, anomaly)
         summary = action_result["summary"]
         if anomaly["label"] != "normal":
             summary = summary + " " + anomaly["summary"]

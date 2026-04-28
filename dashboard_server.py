@@ -49,6 +49,16 @@ ACTION_KEY_TO_SPEC = {
     spec["key"]: spec for spec in TARGET_TO_ACTION.values()
 }
 ACTION_KEY_ORDER = ("heater", "cooling_fan", "ventilation", "mister")
+ENVIRONMENTAL_ANOMALY_LABELS = frozenset(
+    {
+        "normal",
+        "temperature_high",
+        "temperature_low",
+        "humidity_high",
+        "humidity_low",
+        "co2_high",
+    }
+)
 
 LIVE_STATE_LOCK = threading.Lock()
 LIVE_STATE = {
@@ -204,6 +214,59 @@ def promote_state(current: str, incoming: str) -> str:
     return incoming if STATE_RANK.get(incoming, 0) > STATE_RANK.get(current, 0) else current
 
 
+def anomaly_allows_virtual_actions(label: str | None) -> bool:
+    normalized = str(label or "normal").strip() or "normal"
+    return normalized in ENVIRONMENTAL_ANOMALY_LABELS
+
+
+def non_environmental_action_lock_reason(anomaly: dict | None) -> str:
+    anomaly = anomaly or {}
+    label = str(anomaly.get("label") or "normal").strip() or "normal"
+    metadata = ANOMALY_METADATA.get(label, ANOMALY_METADATA["normal"])
+    display_label = str(anomaly.get("display_label") or metadata["display_label"]).strip()
+    return (
+        f"Virtual machines are held idle because {display_label.lower()} is not "
+        "an environmental anomaly."
+    )
+
+
+def apply_non_environmental_action_lock(payload: dict) -> dict:
+    anomaly = payload.get("anomaly") or {}
+    label = str(anomaly.get("label") or "normal").strip() or "normal"
+    if anomaly_allows_virtual_actions(label):
+        payload["action_lock"] = {
+            "active": False,
+            "anomaly_label": label,
+            "reason": None,
+        }
+        return payload
+
+    reason = non_environmental_action_lock_reason(anomaly)
+    locked_actions = []
+    for action in payload.get("actions", []):
+        locked_action = copy.deepcopy(action)
+        locked_action["status"] = "idle"
+        locked_action["active"] = False
+        locked_action["reason"] = reason
+        locked_action["source"] = "Safety lock"
+        locked_action["suppressed_by_anomaly"] = True
+        locked_actions.append(locked_action)
+
+    payload["actions"] = locked_actions
+    payload["triggered_conditions"] = []
+    payload["summary"] = (
+        "Virtual machines are held idle because the current anomaly is not environmental. "
+        + str(anomaly.get("summary") or "Safety lock is active.")
+    )
+    payload["overall_state"] = promote_state("stable", str(anomaly.get("severity") or "stable"))
+    payload["action_lock"] = {
+        "active": True,
+        "anomaly_label": label,
+        "reason": reason,
+    }
+    return payload
+
+
 def _safe_confidence(value: object, default: float = 0.0) -> float:
     try:
         numeric = float(value)
@@ -349,7 +412,7 @@ def normalize_board_result(
     if anomaly["label"] != "normal":
         summary = summary + " " + anomaly["summary"]
 
-    return {
+    normalized = {
         "sensors": copy.deepcopy(sensors),
         "thresholds": copy.deepcopy(thresholds.__dict__),
         "overall_state": overall_state,
@@ -361,6 +424,7 @@ def normalize_board_result(
         "on_device": bool(board_result.get("on_device", True)),
         "anomaly": anomaly,
     }
+    return apply_non_environmental_action_lock(normalized)
 
 
 def parse_compact_telemetry_line(line: str) -> dict:
@@ -591,7 +655,7 @@ def evaluate_history_payload(
     )
     decision["mode"] = mode
     decision["history_window"] = copy.deepcopy(history[-6:])
-    return decision
+    return apply_non_environmental_action_lock(decision)
 
 
 def current_board_logs(limit: int = 80) -> list[dict]:

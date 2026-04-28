@@ -150,6 +150,48 @@ class DashboardServerStateTests(unittest.TestCase):
         payload = dashboard_server.load_presentation_preset({"preset_id": "sensor_spike"})
         self.assertEqual(payload["mode"], "preset")
         self.assertEqual(payload["anomaly"]["label"], "sensor_spike")
+        self.assertFalse(any(action["active"] for action in payload["actions"]))
+        self.assertTrue(payload["action_lock"]["active"])
+
+    def test_store_live_telemetry_locks_actions_for_non_environmental_anomaly(self) -> None:
+        dashboard_server.store_live_telemetry(
+            {
+                "device_id": "esp32-test",
+                "temperature_c": 29.0,
+                "humidity_pct": 61.0,
+                "co2_ppm": 910,
+                "gap_seconds": 40,
+                "board_result": {
+                    "format": "compact_v1",
+                    "decision_engine": "board_on_device_ai",
+                    "model_available": True,
+                    "on_device": True,
+                    "actions": [
+                        {"key": "heater", "active": False, "confidence": 0.10},
+                        {"key": "cooling_fan", "active": True, "confidence": 0.92},
+                        {"key": "ventilation", "active": True, "confidence": 0.88},
+                        {"key": "mister", "active": False, "confidence": 0.05},
+                    ],
+                    "anomaly": {
+                        "label": "sensor_spike",
+                        "confidence": 0.91,
+                        "anomaly_score": 0.91,
+                        "decision_engine": "board_anomaly_ai",
+                        "model_available": True,
+                        "history_ready": True,
+                        "window_size": 6,
+                        "top_predictions": [
+                            {"label": "sensor_spike", "confidence": 0.91},
+                        ],
+                    },
+                },
+            }
+        )
+        payload = dashboard_server.current_live_payload()
+        self.assertEqual(payload["anomaly"]["label"], "sensor_spike")
+        self.assertFalse(any(action["active"] for action in payload["actions"]))
+        self.assertTrue(payload["action_lock"]["active"])
+        self.assertIn("held idle", payload["summary"])
 
     def test_store_board_log_round_trip(self) -> None:
         dashboard_server.store_board_log(
